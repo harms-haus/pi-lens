@@ -2,7 +2,7 @@
  * LSP Client Methods - High-level LSP protocol method wrappers
  * Extends the base LspClient with typed methods for diagnostics operations
  *
- * Adapted from pi-lsp — only diagnostics-related methods are kept.
+ * 
  */
 
 import type { LspServerConfig } from "./types.js";

@@ -5,7 +5,7 @@
  * This module contains the core transport layer (process management, message framing,
  * request/response routing). High-level LSP method wrappers live in lsp-client-methods.ts.
  *
- * Adapted from pi-lsp.
+ * 
  */
 
 import * as child_process from "node:child_process";

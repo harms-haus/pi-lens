@@ -2,7 +2,7 @@
  * LSP Manager - Server lifecycle management
  * Handles starting, stopping, idle timeout, and diagnostics cache
  *
- * Adapted from pi-lsp — all methods kept (needed for diagnostics).
+ * 
  */
 
 import * as fs from "node:fs";

@@ -4,7 +4,7 @@ Deep-dive technical reference for the **pi-lens** extension.
 
 ## 1. Overview
 
-pi-lens is a pi coding agent extension that provides unified code quality checking by automatically running prettier, linters, LSP diagnostics, and `tsc` on files changed by the agent. It combines the linter infrastructure from [pi-lint](https://github.com/harms-haus/pi-lint) and the LSP client from [pi-lsp](https://github.com/harms-haus/pi-lsp) into a single hook-only extension.
+pi-lens is a pi coding agent extension that provides unified code quality checking by automatically running prettier, linters, LSP diagnostics, and `tsc` on files changed by the agent.
 
 pi-lens exposes a single integration point:
 

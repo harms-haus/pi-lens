@@ -93,7 +93,7 @@ All fields are optional — defaults are used for missing keys.
 
 ## Agent Guidelines
 
-- **Do not reinstall pi-lint or pi-lsp** — pi-lens replaces both extensions
+- pi-lens is the sole code quality extension — no other extensions needed
 - **You do not need to manually run checks** — pi-lens runs automatically after edits
 - **React to reported issues** — if pi-lens reports formatting, lint, or type errors, fix them in subsequent edits
 - **Prettier is report-only** — pi-lens tells you what needs formatting but does NOT apply fixes; run `npx prettier --write <file>` if needed

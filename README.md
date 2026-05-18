@@ -4,24 +4,11 @@ Unified code quality extension for [pi](https://github.com/earendil-works/pi-cod
 
 ## Overview
 
-pi-lens hooks after every `write`, `edit`, and `bash` tool call and automatically runs code quality checks on the affected files. It combines the capabilities of [pi-lint](https://github.com/harms-haus/pi-lint) (linter detection and execution) and [pi-lsp](https://github.com/harms-haus/pi-lsp) (LSP diagnostics) into a single, hook-only extension.
+pi-lens hooks after every `write`, `edit`, and `bash` tool call and automatically runs code quality checks on the affected files — prettier, linters, LSP diagnostics, and TypeScript type checking in a single pass.
 
-> **Important:** If you are using pi-lens, you should **uninstall pi-lint and pi-lsp** to avoid duplicate check runs. pi-lens replaces both for hook-only usage.
 
-**Key differences from pi-lint and pi-lsp:**
 
-| Feature | pi-lint | pi-lsp | pi-lens |
-|---------|---------|--------|---------|
-| Auto-lint on edit/write | ✅ | — | ✅ |
-| Auto-diagnostics on edit/write | — | ✅ | ✅ |
-| Auto-check after bash commands | — | — | ✅ |
-| Prettier checking | — | — | ✅ |
-| TypeScript (`tsc`) checking | — | — | ✅ |
-| `lint_files` tool | ✅ | — | — |
-| LSP navigation tools (find refs, etc.) | — | ✅ | — |
-| Unified status bar | — | — | ✅ |
 
-pi-lens is **hook-only** — it has no tools or commands. It runs checks automatically and appends results to tool output.
 
 ## Features
 
@@ -50,7 +37,7 @@ Or try it temporarily without installing:
 pi -e git:github.com/harms-haus/pi-lens
 ```
 
-> **Remember:** Uninstall pi-lint and pi-lsp before enabling pi-lens to avoid duplicate runs.
+
 
 ## Configuration
 

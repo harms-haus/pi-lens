@@ -1,14 +1,11 @@
 /**
  * Shared types for pi-lens
- *
- * Combines types from pi-lint (linter infrastructure) and pi-lsp (LSP diagnostics),
- * plus new types unique to pi-lens (prettier, tsc, unified check pipeline).
  */
 
 import type { Diagnostic } from "vscode-languageserver-types";
 
 // ═══════════════════════════════════════════════════════════════════════
-// pi-lint types (from ../pi-lint/src/types.ts)
+// Linter types
 // ═══════════════════════════════════════════════════════════════════════
 
 /** Normalized lint issue — the universal output format */
@@ -62,7 +59,7 @@ export interface DetectedLinter {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// pi-lsp types (from ../pi-lsp/src/types.ts)
+// LSP types
 // ═══════════════════════════════════════════════════════════════════════
 
 /** LSP server configuration — describes how to start a language server */

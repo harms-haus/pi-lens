@@ -2,7 +2,7 @@
  * Language server configurations for 30+ languages
  * Each entry defines how to detect, install, and run an LSP server
  *
- * Copied verbatim from pi-lsp.
+ * 
  */
 
 import type { LspServerConfig } from "./types.js";

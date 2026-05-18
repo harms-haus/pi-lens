@@ -1,14 +1,14 @@
 /**
  * Output formatting utilities for pi-lens
  *
- * Combines linter issue formatting (from pi-lint) and LSP diagnostic formatting (from pi-lsp).
+ * 
  */
 
 import * as path from "node:path";
 import type { LintIssue } from "./types.js";
 
 // ═══════════════════════════════════════════════════════════════════════
-// Linter Issue Formatting (from pi-lint)
+// Linter Issue Formatting
 // ═══════════════════════════════════════════════════════════════════════
 
 /**
@@ -73,7 +73,7 @@ export function summarizeIssues(issues: LintIssue[]): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// LSP Diagnostic Formatting (from pi-lsp)
+// LSP Diagnostic Formatting
 // ═══════════════════════════════════════════════════════════════════════
 
 /** Diagnostic severity names indexed by LSP DiagnosticSeverity enum */

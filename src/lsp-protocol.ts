@@ -1,7 +1,7 @@
 /**
  * LSP Protocol Types - JSON-RPC message types and minimal LSP parameter/result interfaces
  *
- * Adapted from pi-lsp — only diagnostics-related types are kept.
+ * 
  */
 
 // ── JSON-RPC Message Types ─────────────────────────────────────────────────
