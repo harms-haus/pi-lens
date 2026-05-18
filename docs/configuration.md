@@ -1,0 +1,319 @@
+# Configuration Reference
+
+Complete guide to configuring pi-lens via `.pi-lens.json`.
+
+## File Format
+
+pi-lens reads configuration from a `.pi-lens.json` file in your project root. The file is optional — if absent, all checks run with sensible defaults.
+
+```json
+{
+  "prettier": true,
+  "linters": true,
+  "lsp": true,
+  "tsc": true,
+  "includePatterns": [],
+  "excludePatterns": ["node_modules/**", ".git/**", "dist/**", "build/**"],
+  "lspDelayMs": 1000,
+  "maxConcurrency": 4,
+  "prettierTimeoutMs": 15000,
+  "linterTimeoutMs": 15000,
+  "tscTimeoutMs": 30000,
+  "bashDetection": true,
+  "alwaysReport": true
+}
+```
+
+All fields are optional. Only include the ones you want to override from defaults.
+
+---
+
+## Options Reference
+
+### Check Enable/Disable
+
+#### `prettier`
+
+| Field | Value |
+|-------|-------|
+| **Type** | `boolean` |
+| **Default** | `true` |
+| **Description** | Enable prettier formatting checks on changed files. Runs `prettier --check` (report-only — does NOT write files). Only runs if prettier is installed in the project. |
+
+```json
+{ "prettier": false }
+```
+
+#### `linters`
+
+| Field | Value |
+|-------|-------|
+| **Type** | `boolean` |
+| **Default** | `true` |
+| **Description** | Enable automatic linter detection and execution. pi-lens auto-detects configured linters (ESLint, Biome, Ruff, etc.) and runs them on relevant changed files. |
+
+```json
+{ "linters": false }
+```
+
+#### `lsp`
+
+| Field | Value |
+|-------|-------|
+| **Type** | `boolean` |
+| **Default** | `true` |
+| **Description** | Enable LSP diagnostic queries on changed files. pi-lens starts language servers on demand and queries diagnostics after file changes. Only runs for languages with installed LSP servers. |
+
+```json
+{ "lsp": false }
+```
+
+#### `tsc`
+
+| Field | Value |
+|-------|-------|
+| **Type** | `boolean` |
+| **Default** | `true` |
+| **Description** | Enable TypeScript type checking via `tsc --noEmit`. Only runs if `tsconfig.json` exists and `tsc` is available. Checks are filtered to the changed TypeScript/JavaScript files. |
+
+```json
+{ "tsc": false }
+```
+
+---
+
+### File Patterns
+
+#### `includePatterns`
+
+| Field | Value |
+|-------|-------|
+| **Type** | `string[]` |
+| **Default** | `[]` (all files included) |
+| **Description** | Glob patterns for files to include in checks. When empty, all files detected from tool results are included. Patterns are matched against file paths. |
+
+```json
+{ "includePatterns": ["src/**/*.ts", "lib/**/*.js"] }
+```
+
+#### `excludePatterns`
+
+| Field | Value |
+|-------|-------|
+| **Type** | `string[]` |
+| **Default** | `["node_modules/**", ".git/**", "dist/**", "build/**"]` |
+| **Description** | Glob patterns for files to exclude from checks. Default excludes common generated/dependency directories. |
+
+```json
+{
+  "excludePatterns": [
+    "node_modules/**",
+    ".git/**",
+    "dist/**",
+    "build/**",
+    "vendor/**",
+    "**/*.generated.ts"
+  ]
+}
+```
+
+---
+
+### Timing
+
+#### `lspDelayMs`
+
+| Field | Value |
+|-------|-------|
+| **Type** | `number` |
+| **Default** | `1000` (1 second) |
+| **Description** | Milliseconds to wait after notifying LSP servers of file changes before querying diagnostics. This gives language servers time to process the changes and produce accurate diagnostics. |
+
+```json
+{ "lspDelayMs": 2000 }
+```
+
+#### `maxConcurrency`
+
+| Field | Value |
+|-------|-------|
+| **Type** | `number` |
+| **Default** | `4` |
+| **Description** | Maximum number of parallel check operations. Controls how many linters or checks can run simultaneously. |
+
+```json
+{ "maxConcurrency": 2 }
+```
+
+---
+
+### Timeouts
+
+#### `prettierTimeoutMs`
+
+| Field | Value |
+|-------|-------|
+| **Type** | `number` |
+| **Default** | `15000` (15 seconds) |
+| **Description** | Maximum time in milliseconds to wait for prettier to complete. If prettier takes longer, the check is aborted and reported as an error. |
+
+```json
+{ "prettierTimeoutMs": 30000 }
+```
+
+#### `linterTimeoutMs`
+
+| Field | Value |
+|-------|-------|
+| **Type** | `number` |
+| **Default** | `15000` (15 seconds) |
+| **Description** | Maximum time in milliseconds to wait for each linter to complete. Individual linters may have their own timeout in their definition, but this serves as an overall cap. |
+
+```json
+{ "linterTimeoutMs": 30000 }
+```
+
+#### `tscTimeoutMs`
+
+| Field | Value |
+|-------|-------|
+| **Type** | `number` |
+| **Default** | `30000` (30 seconds) |
+| **Description** | Maximum time in milliseconds to wait for `tsc --noEmit` to complete. TSC can be slow on large projects, so the default is higher than other checks. |
+
+```json
+{ "tscTimeoutMs": 60000 }
+```
+
+---
+
+### Behavior
+
+#### `bashDetection`
+
+| Field | Value |
+|-------|-------|
+| **Type** | `boolean` |
+| **Default** | `true` |
+| **Description** | Enable file detection from bash commands. When enabled, pi-lens analyzes bash tool calls for file-writing patterns (`sed`, `cat`, `echo`, `tee`, `mv`, `cp`, etc.) and runs checks on the affected files. |
+
+```json
+{ "bashDetection": false }
+```
+
+#### `alwaysReport`
+
+| Field | Value |
+|-------|-------|
+| **Type** | `boolean` |
+| **Default** | `true` |
+| **Description** | When `true`, pi-lens always appends a result message to the tool output, even when all checks pass ("all clean"). When `false`, clean results produce no additional output, keeping tool results minimal. |
+
+```json
+{ "alwaysReport": false }
+```
+
+---
+
+## Example Configurations
+
+### Minimal (all defaults)
+
+No `.pi-lens.json` file needed. Or create an empty object:
+
+```json
+{}
+```
+
+### Full configuration
+
+```json
+{
+  "prettier": true,
+  "linters": true,
+  "lsp": true,
+  "tsc": true,
+  "includePatterns": [],
+  "excludePatterns": [
+    "node_modules/**",
+    ".git/**",
+    "dist/**",
+    "build/**",
+    "coverage/**"
+  ],
+  "lspDelayMs": 1500,
+  "maxConcurrency": 4,
+  "prettierTimeoutMs": 15000,
+  "linterTimeoutMs": 15000,
+  "tscTimeoutMs": 30000,
+  "bashDetection": true,
+  "alwaysReport": true
+}
+```
+
+### Prettier-only
+
+Only run prettier checks. Disable linters, LSP, and tsc:
+
+```json
+{
+  "prettier": true,
+  "linters": false,
+  "lsp": false,
+  "tsc": false
+}
+```
+
+### Linting-only
+
+Only run linters. Disable prettier, LSP, and tsc:
+
+```json
+{
+  "prettier": false,
+  "linters": true,
+  "lsp": false,
+  "tsc": false
+}
+```
+
+### LSP and TypeScript only
+
+For projects that rely on type checking and language server diagnostics instead of traditional linters:
+
+```json
+{
+  "prettier": false,
+  "linters": false,
+  "lsp": true,
+  "tsc": true,
+  "lspDelayMs": 2000,
+  "tscTimeoutMs": 60000
+}
+```
+
+### Fast mode
+
+Reduce timeouts and skip slow checks for a faster feedback loop:
+
+```json
+{
+  "prettier": true,
+  "linters": true,
+  "lsp": false,
+  "tsc": false,
+  "linterTimeoutMs": 5000,
+  "prettierTimeoutMs": 5000,
+  "alwaysReport": false
+}
+```
+
+### Disable bash detection
+
+Only check files from explicit `write` and `edit` calls:
+
+```json
+{
+  "bashDetection": false
+}
+```
