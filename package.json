@@ -1,5 +1,5 @@
 {
-  "name": "pi-lens",
+  "name": "@harms-haus/pi-lens",
   "version": "2.0.0",
   "description": "Unified code quality extension for pi — auto-runs prettier, linters, LSP diagnostics, and tsc on changed files",
   "type": "module",

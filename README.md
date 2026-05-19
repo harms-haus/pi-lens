@@ -21,20 +21,36 @@ pi-lens hooks after every `write`, `edit`, and `bash` tool call and automaticall
 
 ## Installation
 
-Install from GitHub:
+### Prerequisites
+
+pi-lens requires the `@harms-haus/code-lens` daemon for check execution. Install it globally:
+
+```bash
+npm i -g @harms-haus/code-lens
+```
+
+### Install pi-lens
+
+From npm (recommended):
 
 ```bash
 # Global install (available in all projects)
-pi install git:github.com/harms-haus/pi-lens
+pi install npm:@harms-haus/pi-lens
 
 # Or project-local install
-pi install -l git:github.com/harms-haus/pi-lens
+pi install -l npm:@harms-haus/pi-lens
+```
+
+From GitHub:
+
+```bash
+pi install git:github.com/harms-haus/pi-lens
 ```
 
 Or try it temporarily without installing:
 
 ```bash
-pi -e git:github.com/harms-haus/pi-lens
+pi -e npm:@harms-haus/pi-lens
 ```
 
 
