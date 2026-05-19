@@ -19,8 +19,9 @@ pi-lens is a thin client extension for the pi coding agent. It detects files cha
 ```
 
 **pi-lens** is responsible only for:
-- Registering hooks (`session_start`, `session_shutdown`, `tool_result`)
+- Registering hooks (`session_start`, `session_shutdown`, `tool_result`, `tool_execution_update`, `tool_execution_end`)
 - Resolving which files were affected by a tool call
+- Monitoring subagent activity during `delegate_to_subagents` and checking git-changed files
 - Starting/stopping the daemon
 - Formatting results for the agent
 
@@ -29,11 +30,15 @@ pi-lens is a thin client extension for the pi coding agent. It detects files cha
 - Caching linter detection, tool availability, and LSP server instances across requests
 - Managing LSP server lifecycle (lazy start, idle timeout, diagnostics cache)
 
-pi-lens exposes a single integration point:
+pi-lens exposes three integration points:
 
 | Integration | Event | Description |
 |---|---|---|
-| Event Hook | `tool_result` | Resolves affected files and sends them to the daemon for a full check |
+| Event Hook | `tool_result` | Resolves affected files from write/edit/bash calls and sends them to the daemon for a full check |
+| Event Hook | `tool_execution_update` | Monitors `delegate_to_subagents` for tool activity and triggers checks on git-changed files with a 5-second cooldown |
+| Event Hook | `tool_execution_end` | Forces a final check when `delegate_to_subagents` completes, bypassing cooldown |
+
+The `tool_result` hook operates on individual tool calls (synchronous, blocking). The subagent hooks (`tool_execution_update` / `tool_execution_end`) operate on the streaming progress of the `delegate_to_subagents` tool — they are fire-and-forget and never block the agent.
 
 The extension is loaded by pi directly from TypeScript. The entry point is `src/index.ts` (default export function), referenced by the `pi.extensions` array in `package.json`:
 
@@ -53,11 +58,35 @@ pi-lens consists of five modules:
 
 ### `index.ts` — Extension Entry Point
 
-Registers three hooks and manages the daemon lifecycle:
+Registers five hooks and manages the daemon lifecycle:
 
-- **`session_start`** — Loads config via `loadConfig()`, calls `ensureDaemon()` to start or connect to the daemon, publishes initial status.
-- **`session_shutdown`** — Calls `stopDaemon()` to shut down the daemon, clears status bar, resets state.
+- **`session_start`** — Loads config via `loadConfig()`, calls `ensureDaemon()` to start or connect to the daemon, publishes initial status, resets the subagent checker.
+- **`session_shutdown`** — Calls `stopDaemon()` to shut down the daemon, clears status bar, resets state, clears the subagent checker.
 - **`tool_result`** — Filters to `write`/`edit`/`bash` tool calls only. Resolves affected files, sends them to the daemon via `runChecks()`, and appends formatted results to the tool result content.
+- **`tool_execution_update`** — Monitors `delegate_to_subagents` for tool activity in partial results. When activity is detected, triggers a code-lens check on git-changed files with a 5-second cooldown.
+- **`tool_execution_end`** — Forces a final check when `delegate_to_subagents` completes, bypassing cooldown.
+
+Contains four module-scope helper functions:
+
+- **`buildStatusPayload(checkStatuses?)`** — Builds the `LensStatusPayload` object for the status bar. Maps per-check statuses to a unified payload with `pending` defaults for missing values.
+- **`hasToolActivity(partialResult)`** — Inspects `partialResult.details.windows[].lines[].kind` looking for `"tool"` entries. Returns `true` if any tool activity is detected in the streaming partial result. Uses defensive null checks throughout.
+- **`resolveChangedFilesFromGit(pi, cwd)`** — Runs `git diff --name-only HEAD` via `pi.exec` to discover files changed since the last commit. Deduplicates results and filters to files that exist on disk.
+- **`createSubagentChecker(pi, state, publishStatus)`** — Factory function that encapsulates all subagent monitoring state (cooldown timing, in-flight tracking, pending flags, shutdown signal). Returns a `SubagentChecker` interface.
+
+### SubagentChecker Interface
+
+The `SubagentChecker` object manages cooldown-gated check scheduling:
+
+| Method / Getter | Description |
+|---|---|
+| `runChecksAndPublish()` | Async: resolves git-changed files, runs checks via the daemon, publishes status. Fire-and-forget. |
+| `scheduleCooldownCheck()` | Schedules a check after the remaining cooldown time. Cancels any existing timer. |
+| `markPending()` | Sets the `hasPendingCheck` flag — used to coalesce multiple rapid updates into one check. |
+| `clear()` | Cancels timers, sets the shutdown flag, resets all state. Used during `session_shutdown`. |
+| `reset()` | Calls `clear()` then unsets the shutdown flag. Used during `session_start`. |
+| `lastCheckTime` | Getter — timestamp of the last completed check. |
+| `checkInFlight` | Getter — whether a check is currently running. |
+| `hasPendingCheck` | Getter — whether a check has been deferred by cooldown logic. |
 
 Imports from: `@harms-haus/code-lens/client` (daemon lifecycle), `config.ts`, `hook-runner.ts`, `types.ts`.
 
@@ -127,10 +156,10 @@ Agent calls write/edit/bash tool
          │     ├─ Filter to paths within cwd (path traversal prevention)
          │     └─ Deduplicate + verify files exist on disk
          │
-         ├─ filterFilesByPatterns()
-         │     └─ Apply include/exclude glob patterns (cached regex)
-         │
-         └─ runChecks(filteredFiles, cwd, config)
+         └─ runChecks(files, cwd, config)
+               │
+               ├─ filterFilesByPatterns()
+               │     └─ Apply include/exclude glob patterns (cached regex)
                │
                ├─ getSocketPath(cwd) → Unix socket path
                │
@@ -158,6 +187,51 @@ Agent calls write/edit/bash tool
   index.ts appends result.text to tool result content
 ```
 
+### Subagent Check Flow (tool_execution_update / tool_execution_end)
+
+```
+Agent runs delegate_to_subagents tool
+         │
+         ▼
+  pi fires tool_execution_update events (streaming)
+         │
+         ▼
+  index.ts: tool_execution_update handler
+         │
+         ├─ Filter: only delegate_to_subagents
+         ├─ hasToolActivity(partialResult)
+         │     └─ Inspect partialResult.details.windows[].lines[].kind === 'tool'
+         │
+         ├─ Cooldown logic:
+         │     ├─ Cooldown elapsed AND no check in-flight?
+         │     │     └─ checker.runChecksAndPublish()  (immediate)
+         │     └─ Cooldown NOT elapsed OR check in-flight?
+         │           ├─ checker.markPending()
+         │           └─ If no check in-flight: checker.scheduleCooldownCheck()
+         │
+         └─ runChecksAndPublish() internals:
+               ├─ resolveChangedFilesFromGit(pi, cwd)
+               │     └─ git diff --name-only HEAD → deduplicated, existing files
+               ├─ runChecks(files, cwd, config)
+               │     └─ Daemon fullCheck request (same as tool_result flow)
+               ├─ publishStatus(result.statuses)
+               └─ If hasPendingCheck: scheduleCooldownCheck()
+
+  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
+
+  pi fires tool_execution_end event (when delegate_to_subagents completes)
+         │
+         ▼
+  index.ts: tool_execution_end handler
+         │
+         ├─ Filter: only delegate_to_subagents
+         └─ checker.runChecksAndPublish()  (forced, bypasses cooldown)
+```
+
+**Cooldown algorithm (5-second minimum between checks):**
+
+Multiple rapid `tool_execution_update` events are coalesced via the `hasPendingCheck` flag. When a check completes and finds `hasPendingCheck === true`, it schedules another check after the remaining cooldown time. This ensures at most one daemon request per 5-second window while still catching the latest state.
+
 ### State Flow
 
 ```
@@ -167,7 +241,8 @@ session_start
   ├─ loadConfig(cwd)              → state.config
   ├─ ensureDaemon(cwd)            → starts daemon if not running
   ├─ ctx.ui.notify('pi-lens: ready', 'info')
-  └─ publishStatus()              → ui.setStatus("pi-lens", payload)
+  ├─ publishStatus()              → ui.setStatus("pi-lens", payload)
+  └─ checker.reset()              → clear timers, reset shutdown flag
 
 tool_result
   ├─ resolveFilesFromToolResult()
@@ -176,8 +251,17 @@ tool_result
   ├─ publishStatus(statuses)      → ui.setStatus("pi-lens", payload)
   └─ Return modified tool result with appended content
 
+tool_execution_update (subagent streaming)
+  ├─ hasToolActivity(partialResult)?
+  ├─ Cooldown elapsed, no check in-flight? → checker.runChecksAndPublish()
+  └─ Otherwise → checker.markPending() + scheduleCooldownCheck()
+
+tool_execution_end (subagent complete)
+  └─ checker.runChecksAndPublish()  (forced, no cooldown)
+
 session_shutdown
   ├─ stopDaemon(cwd)              → SIGTERM daemon, clean socket/metadata
+  ├─ checker.clear()              → cancel timers, set shutdown flag
   ├─ ui.setStatus("pi-lens", undefined)
   └─ Reset state to defaults
 ```
@@ -213,6 +297,23 @@ Status deduplication is performed by comparing JSON strings — if the status pa
 ### Glob Regex Caching
 
 `filterFilesByPatterns` compiles glob patterns into `RegExp` objects. Compiled regexes are cached in a module-level `globRegexCache` Map keyed by the joined patterns string. Since patterns come from config and don't change during a session, this cache grows to at most two entries and is reused for the entire session.
+
+### Subagent Checker State
+
+The `createSubagentChecker` factory encapsulates all subagent monitoring state in closure variables — no class or external object is involved:
+
+```typescript
+// Encapsulated within createSubagentChecker closure:
+let lastCheckTime: number = 0;              // Timestamp of last completed check
+let checkInFlight: boolean = false;          // Whether a daemon request is active
+let pendingTimer: setTimeout | undefined;    // Cooldown timer handle
+let hasPendingCheck: boolean = false;        // Coalescing flag for rapid updates
+let shutdown: boolean = false;               // Prevents post-shutdown execution
+```
+
+The **`shutdown` flag** is critical for correctness across async boundaries. When `clear()` is called during `session_shutdown`, it sets `shutdown = true`. Any in-flight `runChecksAndPublish()` call checks this flag after each `await` point and exits early if set. This prevents stale daemon requests from publishing status to a destroyed session context.
+
+The factory is **reset** (not recreated) on each `session_start` via `checker.reset()`, which calls `clear()` and then unsets the shutdown flag.
 
 ### Daemon-Side Caching
 

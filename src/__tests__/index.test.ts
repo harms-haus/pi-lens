@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 // Mock all internal modules
@@ -31,6 +31,10 @@ vi.mock("../config.js", () => ({
 vi.mock("../hook-runner.js", () => ({
   resolveFilesFromToolResult: vi.fn(),
   runChecks: vi.fn(),
+}));
+
+vi.mock("node:fs", () => ({
+  existsSync: vi.fn().mockReturnValue(true),
 }));
 
 import { loadConfig, DEFAULT_CONFIG } from "../config.js";
@@ -123,6 +127,32 @@ function createMockContext(overrides?: Partial<ExtensionContext>): ExtensionCont
     getSystemPrompt: vi.fn(),
     ...overrides,
   } as unknown as ExtensionContext;
+}
+
+// ── Subagent test helpers ──────────────────────────────────────────
+
+function createToolActivityPartialResult() {
+  return {
+    details: {
+      windows: [
+        {
+          lines: [{ kind: "tool", content: "write file.ts" }],
+        },
+      ],
+    },
+  };
+}
+
+function createNoActivityPartialResult() {
+  return {
+    details: {
+      windows: [
+        {
+          lines: [{ kind: "text", content: "thinking..." }],
+        },
+      ],
+    },
+  };
 }
 
 beforeEach(() => {
@@ -549,5 +579,407 @@ describe("tool_result hook", () => {
     expect(status.linters).toBe("clean");
     expect(status.lsp).toBe("clean");
     expect(status.tsc).toBe("issues");
+  });
+});
+
+// ── Handler registration for subagent monitoring ──────────────────────
+
+describe("subagent handler registration", () => {
+  it("registers tool_execution_update handler", () => {
+    const { pi } = createMockPi();
+    extension(pi);
+    expect(pi.on).toHaveBeenCalledWith("tool_execution_update", expect.any(Function));
+  });
+
+  it("registers tool_execution_end handler", () => {
+    const { pi } = createMockPi();
+    extension(pi);
+    expect(pi.on).toHaveBeenCalledWith("tool_execution_end", expect.any(Function));
+  });
+});
+
+// ── tool_execution_update filtering ──────────────────────────────────
+
+describe("tool_execution_update filtering", () => {
+  it("ignores non-delegate_to_subagents tools", async () => {
+    const { pi, handlers } = createMockPi();
+    extension(pi);
+
+    const handler = handlers.get("tool_execution_update")!;
+    handler({
+      type: "tool_execution_update",
+      toolName: "write",
+      toolCallId: "call-filter-1",
+      partialResult: createToolActivityPartialResult(),
+    });
+
+    expect(pi.exec).not.toHaveBeenCalled();
+    expect(runChecks).not.toHaveBeenCalled();
+  });
+
+  it("ignores delegate_to_subagents with no tool activity", async () => {
+    const { pi, handlers } = createMockPi();
+    extension(pi);
+
+    const handler = handlers.get("tool_execution_update")!;
+    handler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-filter-2",
+      partialResult: createNoActivityPartialResult(),
+    });
+
+    expect(pi.exec).not.toHaveBeenCalled();
+    expect(runChecks).not.toHaveBeenCalled();
+  });
+
+  it("ignores delegate_to_subagents with null partialResult", async () => {
+    const { pi, handlers } = createMockPi();
+    extension(pi);
+
+    const handler = handlers.get("tool_execution_update")!;
+    handler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-filter-3",
+      partialResult: null,
+    });
+
+    expect(pi.exec).not.toHaveBeenCalled();
+    expect(runChecks).not.toHaveBeenCalled();
+  });
+
+  it("ignores delegate_to_subagents with empty windows", async () => {
+    const { pi, handlers } = createMockPi();
+    extension(pi);
+
+    const handler = handlers.get("tool_execution_update")!;
+    handler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-filter-4",
+      partialResult: { details: { windows: [] } },
+    });
+
+    expect(pi.exec).not.toHaveBeenCalled();
+    expect(runChecks).not.toHaveBeenCalled();
+  });
+});
+
+// ── tool_execution_update triggers check ─────────────────────────────
+
+describe("tool_execution_update triggers check", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function setupSessionAndMocks() {
+    const { pi, handlers } = createMockPi();
+    const ctx = createMockContext();
+    extension(pi);
+
+    const startHandler = handlers.get("session_start")!;
+    await startHandler({ type: "session_start", reason: "startup" }, ctx);
+
+    vi.mocked(pi.exec).mockResolvedValue({
+      code: 0,
+      stdout: "src/foo.ts\nsrc/bar.ts",
+      stderr: "",
+      killed: false,
+    });
+    vi.mocked(runChecks).mockResolvedValue({
+      text: "clean",
+      statuses: { prettier: "clean", linters: "clean", lsp: "clean", tsc: "clean" },
+      durationMs: 50,
+    });
+
+    return { pi, handlers, ctx };
+  }
+
+  it("triggers immediate check when cooldown elapsed", async () => {
+    const { pi, handlers } = await setupSessionAndMocks();
+
+    const handler = handlers.get("tool_execution_update")!;
+    handler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-trigger-1",
+      partialResult: createToolActivityPartialResult(),
+    });
+
+    await vi.runAllTimersAsync();
+
+    expect(pi.exec).toHaveBeenCalledWith(
+      "git",
+      ["diff", "--name-only", "HEAD"],
+      expect.objectContaining({ cwd: "/home/user/project", timeout: 5000 }),
+    );
+    expect(runChecks).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.stringContaining("src/foo.ts"),
+        expect.stringContaining("src/bar.ts"),
+      ]),
+      "/home/user/project",
+      expect.objectContaining({ bashDetection: true }),
+    );
+  });
+
+  it("triggers check on tool_execution_end for delegate_to_subagents", async () => {
+    const { handlers } = await setupSessionAndMocks();
+
+    const handler = handlers.get("tool_execution_end")!;
+    handler({
+      type: "tool_execution_end",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-end-1",
+    });
+
+    await vi.runAllTimersAsync();
+
+    expect(runChecks).toHaveBeenCalled();
+  });
+
+  it("ignores tool_execution_end for non-delegate tools", async () => {
+    const { handlers } = await setupSessionAndMocks();
+
+    const handler = handlers.get("tool_execution_end")!;
+    handler({
+      type: "tool_execution_end",
+      toolName: "write",
+      toolCallId: "call-end-2",
+    });
+
+    await vi.runAllTimersAsync();
+
+    expect(handlers.get("tool_execution_end")).toBeDefined();
+    expect(runChecks).not.toHaveBeenCalled();
+  });
+});
+
+// ── Cooldown enforcement ─────────────────────────────────────────────
+
+describe("cooldown enforcement", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function setupSessionAndMocks() {
+    const { pi, handlers } = createMockPi();
+    const ctx = createMockContext();
+    extension(pi);
+
+    const startHandler = handlers.get("session_start")!;
+    await startHandler({ type: "session_start", reason: "startup" }, ctx);
+
+    vi.mocked(pi.exec).mockResolvedValue({
+      code: 0,
+      stdout: "src/foo.ts",
+      stderr: "",
+      killed: false,
+    });
+    vi.mocked(runChecks).mockResolvedValue({
+      text: "clean",
+      statuses: { prettier: "clean", linters: "clean", lsp: "clean", tsc: "clean" },
+      durationMs: 50,
+    });
+
+    return { pi, handlers, ctx };
+  }
+
+  it("enforces 5-second cooldown between checks", async () => {
+    const { handlers } = await setupSessionAndMocks();
+
+    const handler = handlers.get("tool_execution_update")!;
+
+    // First update triggers immediate check (lastCheckTime is 0 → cooldown elapsed)
+    handler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-cd-1",
+      partialResult: createToolActivityPartialResult(),
+    });
+
+    await vi.runAllTimersAsync();
+    expect(runChecks).toHaveBeenCalledTimes(1);
+
+    // Advance by 2 seconds (within cooldown)
+    await vi.advanceTimersByTimeAsync(2000);
+
+    // Second update — cooldown NOT elapsed, should schedule a pending check
+    handler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-cd-2",
+      partialResult: createToolActivityPartialResult(),
+    });
+
+    // No additional check should have run yet
+    expect(runChecks).toHaveBeenCalledTimes(1);
+
+    // Advance remaining time to pass 5-second cooldown
+    await vi.advanceTimersByTimeAsync(3500);
+
+    // Now the pending check should have fired
+    expect(runChecks).toHaveBeenCalledTimes(2);
+  });
+
+  it("collapses multiple pending requests into one", async () => {
+    const { handlers } = await setupSessionAndMocks();
+
+    const handler = handlers.get("tool_execution_update")!;
+
+    // First update triggers immediate check
+    handler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-collapse-1",
+      partialResult: createToolActivityPartialResult(),
+    });
+
+    await vi.runAllTimersAsync();
+    expect(runChecks).toHaveBeenCalledTimes(1);
+
+    // Advance slightly into cooldown
+    await vi.advanceTimersByTimeAsync(1000);
+
+    // Fire 3 rapid updates during cooldown — all should be coalesced
+    for (let i = 0; i < 3; i++) {
+      handler({
+        type: "tool_execution_update",
+        toolName: "delegate_to_subagents",
+        toolCallId: `call-collapse-rapid-${i}`,
+        partialResult: createToolActivityPartialResult(),
+      });
+    }
+
+    // Still only the original check
+    expect(runChecks).toHaveBeenCalledTimes(1);
+
+    // Advance past cooldown
+    await vi.advanceTimersByTimeAsync(5000);
+
+    // Only one additional check should have run (3 requests coalesced into 1)
+    expect(runChecks).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ── Session lifecycle for subagent checker ───────────────────────────
+
+describe("subagent session lifecycle", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function setupSessionAndMocks() {
+    const { pi, handlers } = createMockPi();
+    const ctx = createMockContext();
+    extension(pi);
+
+    const startHandler = handlers.get("session_start")!;
+    await startHandler({ type: "session_start", reason: "startup" }, ctx);
+
+    vi.mocked(pi.exec).mockResolvedValue({
+      code: 0,
+      stdout: "src/foo.ts",
+      stderr: "",
+      killed: false,
+    });
+    vi.mocked(runChecks).mockResolvedValue({
+      text: "clean",
+      statuses: { prettier: "clean", linters: "clean", lsp: "clean", tsc: "clean" },
+      durationMs: 50,
+    });
+
+    return { pi, handlers, ctx };
+  }
+
+  it("clears timer on session_shutdown", async () => {
+    const { handlers, ctx } = await setupSessionAndMocks();
+
+    const updateHandler = handlers.get("tool_execution_update")!;
+
+    // Trigger first check
+    updateHandler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-lifecycle-1",
+      partialResult: createToolActivityPartialResult(),
+    });
+    await vi.runAllTimersAsync();
+    expect(runChecks).toHaveBeenCalledTimes(1);
+
+    // Advance into cooldown and trigger a pending check
+    await vi.advanceTimersByTimeAsync(1000);
+    updateHandler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-lifecycle-2",
+      partialResult: createToolActivityPartialResult(),
+    });
+
+    // Shutdown — should clear the pending timer
+    const shutdownHandler = handlers.get("session_shutdown")!;
+    await shutdownHandler({ type: "session_shutdown", reason: "quit" }, ctx);
+
+    // Clear runChecks mock to verify no further calls
+    vi.mocked(runChecks).mockClear();
+
+    // Advance well past cooldown — no additional check should fire
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(runChecks).not.toHaveBeenCalled();
+  });
+
+  it("resets state on session_start", async () => {
+    const { pi, handlers, ctx } = await setupSessionAndMocks();
+
+    const updateHandler = handlers.get("tool_execution_update")!;
+
+    // Trigger a check in the first session
+    updateHandler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-reset-1",
+      partialResult: createToolActivityPartialResult(),
+    });
+    await vi.runAllTimersAsync();
+    expect(runChecks).toHaveBeenCalledTimes(1);
+
+    // Start a new session — resets checker state (cooldown reset)
+    const startHandler = handlers.get("session_start")!;
+    await startHandler({ type: "session_start", reason: "startup" }, ctx);
+
+    // Re-apply mocks since session_start triggers loadConfig
+    vi.mocked(pi.exec).mockResolvedValue({
+      code: 0,
+      stdout: "src/baz.ts",
+      stderr: "",
+      killed: false,
+    });
+    vi.mocked(runChecks).mockClear();
+
+    // Should be able to trigger an immediate check again (cooldown was reset)
+    updateHandler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-reset-2",
+      partialResult: createToolActivityPartialResult(),
+    });
+
+    await vi.runAllTimersAsync();
+
+    expect(runChecks).toHaveBeenCalledTimes(1);
   });
 });

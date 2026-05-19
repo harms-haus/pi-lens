@@ -53,8 +53,8 @@
     ]
   },
   "dependencies": {
-    "typebox": "^1.1.38",
-    "@harms-haus/code-lens": "^0.2.0"
+    "@harms-haus/code-lens": "^0.2.1",
+    "typebox": "^1.1.38"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.74.0",

@@ -4,7 +4,7 @@ Unified code quality extension for [pi](https://github.com/earendil-works/pi-cod
 
 ## Overview
 
-pi-lens hooks after every `write`, `edit`, and `bash` tool call and automatically runs code quality checks on the affected files — prettier, linters, LSP diagnostics, and TypeScript type checking in a single pass.
+pi-lens hooks after every `write`, `edit`, and `bash` tool call and automatically runs code quality checks on the affected files — prettier, linters, LSP diagnostics, and TypeScript type checking in a single pass. When used with pi-subagents, pi-lens also monitors subagent file edits in real-time, updating status as changes are detected.
 
 
 
@@ -17,6 +17,7 @@ pi-lens hooks after every `write`, `edit`, and `bash` tool call and automaticall
 - **LSP diagnostics** — Queries language server diagnostics for 33 supported languages
 - **TypeScript checking** — Runs `tsc --noEmit` on changed TS/JS files
 - **Bash file detection** — Analyzes bash commands (`sed`, `cat`, `echo`, `tee`, `perl`, `awk`, `mv`, `cp`, etc.) to detect affected files
+- **Subagent monitoring** — Detects file changes from subagent (`delegate_to_subagents`) tool calls in real-time and runs checks with a 5-second cooldown to avoid excessive daemon load
 - **Unified status bar** — Single `pi-lens` status display combining all check results
 
 ## Installation
@@ -164,7 +165,7 @@ pi-lens (via the code-lens daemon) queries LSP diagnostics for 33 languages:
 
 ## How It Works
 
-pi-lens is a **thin daemon client** that delegates all check execution to the [`@harms-haus/code-lens`](https://github.com/harms-haus/code-lens) daemon. It registers a single `tool_result` event hook. After every `write`, `edit`, or `bash` tool call:
+pi-lens is a **thin daemon client** that delegates all check execution to the [`@harms-haus/code-lens`](https://github.com/harms-haus/code-lens) daemon. It registers event hooks for tool results and subagent monitoring. After every `write`, `edit`, or `bash` tool call:
 
 ```
 tool_result event
@@ -195,6 +196,30 @@ tool_result event
 - **Session start**: `ensureDaemon()` starts or connects to the code-lens daemon for the project directory
 - **Per check**: `runChecks()` sends a single `fullCheck` JSON-RPC request over a Unix socket. The daemon runs all four check types concurrently and returns formatted results plus per-check statuses
 - **Session shutdown**: `stopDaemon()` stops the daemon process
+
+### Subagent monitoring
+
+pi-lens also monitors subagent file edits while a `delegate_to_subagents` tool call is in progress, updating the status bar in real-time:
+
+```
+tool_execution_update event
+  │
+  ├─ Is tool delegate_to_subagents? ── No ──→ skip
+  │
+  ├─ Has tool activity in windows? ── No ──→ skip
+  │
+  ├─ 5s cooldown elapsed? ── Yes ──→ run check immediately
+  │                             ── No ──→ queue for remaining cooldown
+  │
+  └─ git diff --name-only HEAD → resolve changed files
+        │
+        └─ runChecks() → publishStatus() → status bar updates
+
+tool_execution_end event
+  └─ Forces a final check (bypasses cooldown)
+```
+
+Subagent checks use `git diff --name-only HEAD` to resolve changed files (since tool input doesn't contain direct file paths). A 5-second cooldown prevents excessive daemon load during rapid subagent activity. Pending checks are deferred and run once the cooldown elapses.
 
 ### Check execution (handled by the daemon)
 
@@ -251,7 +276,7 @@ pi-lens/
 │   ├── types.ts               # Shared types (LensConfig, CheckStatus, LensStatusPayload)
 │   └── bash-file-detector.ts  # Bash command analysis for file-writing patterns
 ├── skills/
-│   └── lens-hooks/
+│   └── code-lens-explorer/
 │       └── SKILL.md           # Pi agent skill file
 ├── docs/
 │   ├── architecture.md        # Deep-dive architecture reference

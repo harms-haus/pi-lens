@@ -5,6 +5,8 @@
  * linters, LSP diagnostics, and tsc on changed files via the code-lens daemon.
  */
 
+import * as path from "node:path";
+import * as fs from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { ensureDaemon, stopDaemon } from "@harms-haus/code-lens/client";
 import { loadConfig, DEFAULT_CONFIG } from "./config.js";
@@ -25,6 +27,175 @@ function buildStatusPayload(checkStatuses?: {
     linters: checkStatuses?.linters ?? "pending",
     lsp: checkStatuses?.lsp ?? "pending",
     tsc: checkStatuses?.tsc ?? "pending",
+  };
+}
+
+// ── Subagent Activity Detection ────────────────────────────────────────────
+
+const SUBAGENT_CHECK_COOLDOWN_MS = 5000;
+
+function hasToolActivity(partialResult: unknown): boolean {
+  if (typeof partialResult !== "object" || partialResult === null) return false;
+  const pr = partialResult as Record<string, unknown>;
+  if (typeof pr.details !== "object" || pr.details === null) return false;
+  const details = pr.details as Record<string, unknown>;
+  const windows = details.windows;
+  if (!Array.isArray(windows)) return false;
+  return windows.some(
+    (w: unknown) =>
+      typeof w === "object" &&
+      w !== null &&
+      Array.isArray((w as Record<string, unknown>).lines) &&
+      ((w as Record<string, unknown>).lines as unknown[]).some(
+        (line: unknown) =>
+          typeof line === "object" &&
+          line !== null &&
+          (line as Record<string, unknown>).kind === "tool",
+      ),
+  );
+}
+
+async function resolveChangedFilesFromGit(pi: ExtensionAPI, cwd: string): Promise<string[]> {
+  const results: string[] = [];
+
+  try {
+    const result = await pi.exec("git", ["diff", "--name-only", "HEAD"], {
+      cwd,
+      timeout: 5000,
+    });
+    if (result.code === 0 && result.stdout.trim()) {
+      for (const line of result.stdout.trim().split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed) results.push(path.resolve(cwd, trimmed));
+      }
+    }
+  } catch {
+    // git may not be available or not a git repo
+  }
+
+  return [...new Set(results)].filter((p) => {
+    try {
+      return fs.existsSync(p);
+    } catch {
+      return false;
+    }
+  });
+}
+
+// ── Subagent Check Controller ────────────────────────────────────────────
+
+interface SubagentChecker {
+  runChecksAndPublish(): Promise<void>;
+  scheduleCooldownCheck(): void;
+  markPending(): void;
+  clear(): void;
+  reset(): void;
+  get lastCheckTime(): number;
+  get checkInFlight(): boolean;
+  get hasPendingCheck(): boolean;
+}
+
+function createSubagentChecker(
+  pi: ExtensionAPI,
+  state: LensState,
+  publishStatus: (statuses?: {
+    prettier: CheckStatus;
+    linters: CheckStatus;
+    lsp: CheckStatus;
+    tsc: CheckStatus;
+  }) => void,
+): SubagentChecker {
+  let lastCheckTime = 0;
+  let checkInFlight = false;
+  let pendingTimer: ReturnType<typeof setTimeout> | undefined;
+  let hasPendingCheck = false;
+  let shutdown = false;
+
+  async function runChecksAndPublish(): Promise<void> {
+    checkInFlight = true;
+    try {
+      const files = await resolveChangedFilesFromGit(pi, state.cwd);
+      if (shutdown) return;
+      if (files.length === 0) {
+        lastCheckTime = Date.now();
+        if (hasPendingCheck) {
+          hasPendingCheck = false;
+          scheduleCooldownCheck();
+        }
+        return;
+      }
+
+      const result = await runChecks(files, state.cwd, state.config);
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- shutdown may be set by clear() across await boundary
+      if (shutdown) return;
+      publishStatus(result.statuses);
+      lastCheckTime = Date.now();
+
+      if (hasPendingCheck) {
+        hasPendingCheck = false;
+        scheduleCooldownCheck();
+      }
+    } catch {
+      if (shutdown) return;
+      lastCheckTime = Date.now();
+      if (hasPendingCheck) {
+        hasPendingCheck = false;
+        scheduleCooldownCheck();
+      }
+    } finally {
+      checkInFlight = false;
+    }
+  }
+
+  function scheduleCooldownCheck(): void {
+    if (pendingTimer !== undefined) {
+      clearTimeout(pendingTimer);
+      pendingTimer = undefined;
+    }
+
+    const remaining = Math.max(0, SUBAGENT_CHECK_COOLDOWN_MS - (Date.now() - lastCheckTime));
+
+    pendingTimer = setTimeout(() => {
+      pendingTimer = undefined;
+      void runChecksAndPublish();
+    }, remaining);
+  }
+
+  function markPending(): void {
+    hasPendingCheck = true;
+  }
+
+  function clear(): void {
+    shutdown = true;
+    if (pendingTimer !== undefined) {
+      clearTimeout(pendingTimer);
+      pendingTimer = undefined;
+    }
+    hasPendingCheck = false;
+    checkInFlight = false;
+    lastCheckTime = 0;
+  }
+
+  function reset(): void {
+    clear();
+    shutdown = false;
+  }
+
+  return {
+    runChecksAndPublish,
+    scheduleCooldownCheck,
+    markPending,
+    clear,
+    reset,
+    get lastCheckTime() {
+      return lastCheckTime;
+    },
+    get checkInFlight() {
+      return checkInFlight;
+    },
+    get hasPendingCheck() {
+      return hasPendingCheck;
+    },
   };
 }
 
@@ -58,6 +229,8 @@ export default function (pi: ExtensionAPI): void {
     }
   }
 
+  const checker = createSubagentChecker(pi, state, publishStatus);
+
   // ── Session Lifecycle ──────────────────────────────────────────────
 
   pi.on("session_start", async (_event, ctx) => {
@@ -74,10 +247,12 @@ export default function (pi: ExtensionAPI): void {
     }
 
     publishStatus();
+    checker.reset();
   });
 
   pi.on("session_shutdown", async () => {
     await stopDaemon(state.cwd);
+    checker.clear();
     if (currentCtx?.hasUI) {
       currentCtx.ui.setStatus("pi-lens", undefined);
     }
@@ -119,6 +294,34 @@ export default function (pi: ExtensionAPI): void {
       // Never block the original tool result
     }
 
+    return undefined;
+  });
+
+  // ── Hook: tool_execution_update (subagent monitoring) ──────────────
+
+  pi.on("tool_execution_update", (event) => {
+    if (event.toolName !== "delegate_to_subagents") return undefined;
+    if (!hasToolActivity(event.partialResult)) return undefined;
+
+    const cooldownElapsed = Date.now() - checker.lastCheckTime >= SUBAGENT_CHECK_COOLDOWN_MS;
+
+    if (!checker.checkInFlight && cooldownElapsed) {
+      void checker.runChecksAndPublish();
+    } else {
+      checker.markPending();
+      if (!checker.checkInFlight) {
+        checker.scheduleCooldownCheck();
+      }
+    }
+
+    return undefined;
+  });
+
+  // ── Hook: tool_execution_end (final subagent check) ────────────────
+
+  pi.on("tool_execution_end", (event) => {
+    if (event.toolName !== "delegate_to_subagents") return undefined;
+    void checker.runChecksAndPublish();
     return undefined;
   });
 }
