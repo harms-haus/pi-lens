@@ -17,22 +17,69 @@ If not found, install globally:
 npm i -g @harms-haus/code-lens
 ```
 
-## Tools
+## Commands
 
-Code-lens provides these daemon-backed tools. Each sends a request to a warm LSP server and returns structured results.
+All position-based commands use `--file`, `--line`, `--col` (1-indexed). The daemon auto-starts on first use.
 
-| Tool | What it does |
-|------|-------------|
-| `hover` | Shows type info and docs for a symbol at a position |
-| `find-definition` | Jumps to where a symbol is defined |
-| `find-references` | Finds all usages of a symbol across the workspace |
-| `find-implementations` | Finds concrete implementations of an interface/abstract class |
-| `find-type-definition` | Jumps to the *type* definition of an expression (e.g., the class behind a variable) |
-| `find-type-hierarchy` | Shows inheritance chain (parents and/or children) for a type |
-| `find-symbols` | Fuzzy-searches for symbols by name across the workspace |
-| `find-document-symbols` | Lists all symbols (classes, functions, variables) in a single file |
-| `find-calls` | Shows callers and callees for a function |
-| `rename-symbol` | Renames a symbol across the entire workspace |
-| `diagnostics` | Gets LSP diagnostics (errors, warnings) for a file or the whole workspace |
+### `hover` — Type info and docs for a symbol
+```bash
+code-lens hover --file <path> --line <n> --col <n>
+```
 
-The daemon auto-starts on first use and keeps LSP servers warm across calls. No manual lifecycle management needed when using the CLI.
+### `find-definition` — Where a symbol is defined
+```bash
+code-lens find-definition --file <path> --line <n> --col <n>
+```
+
+### `find-references` — All usages of a symbol
+```bash
+code-lens find-references --file <path> --line <n> --col <n>
+```
+
+### `find-implementations` — Concrete implementations of an interface
+```bash
+code-lens find-implementations --file <path> --line <n> --col <n>
+```
+
+### `find-type-definition` — Type definition of an expression
+```bash
+code-lens find-type-definition --file <path> --line <n> --col <n>
+```
+
+### `find-type-hierarchy` — Inheritance chain for a type
+```bash
+code-lens find-type-hierarchy --file <path> --line <n> --col <n>
+                                              [--direction supertypes|subtypes|both]
+                                              [--depth <n>]
+```
+- `--direction` (optional, default: `both`)
+- `--depth` (optional, default: `2`)
+
+### `find-symbols` — Fuzzy search symbols across the workspace
+```bash
+code-lens find-symbols --query <string> [--kind <kind>]
+```
+- `--kind` (optional) — filter: `class`, `function`, `interface`, `enum`, etc.
+
+### `find-document-symbols` — List all symbols in a file
+```bash
+code-lens find-document-symbols --file <path>
+```
+
+### `find-calls` — Callers and callees for a function
+```bash
+code-lens find-calls --file <path> --line <n> --col <n>
+```
+
+### `rename-symbol` — Rename a symbol across the workspace
+```bash
+code-lens rename-symbol --file <path> --line <n> --col <n> --new-name <string>
+```
+
+### `diagnostics` — LSP diagnostics for files or workspace
+```bash
+code-lens diagnostics --file <path>
+code-lens diagnostics --files <paths>  # comma-separated
+code-lens diagnostics --workspace      # entire workspace
+                       [--refresh]     # force refresh
+```
