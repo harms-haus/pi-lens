@@ -2,33 +2,19 @@
  * pi-lens — Extension entry point
  *
  * Hooks after write/edit/bash tools and automatically runs prettier,
- * linters, LSP diagnostics, and tsc on changed files.
+ * linters, LSP diagnostics, and tsc on changed files via the code-lens daemon.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { detectLinters } from "./linter-registry.js";
-import { LspManager, DEFAULT_IDLE_TIMEOUT_MS } from "./lsp-manager.js";
+import { ensureDaemon, stopDaemon } from "@harms-haus/code-lens/client";
 import { loadConfig, DEFAULT_CONFIG } from "./config.js";
 import { resolveFilesFromToolResult, runChecks } from "./hook-runner.js";
-import { isPrettierAvailable } from "./prettier-runner.js";
-import { isTscAvailable } from "./tsc-runner.js";
-import type { LensConfig, CheckStatus, LensStatusPayload, DetectedLinter } from "./types.js";
-
-// ── State Interface ────────────────────────────────────────────────────
-
-interface LensState {
-  detectedLinters: DetectedLinter[];
-  lspManager: LspManager | null;
-  config: LensConfig;
-  cwd: string;
-  prettierAvailable: boolean;
-  tscAvailable: boolean;
-}
+import type { CheckStatus, LensStatusPayload } from "./types.js";
+import type { LensState } from "./hook-runner.js";
 
 // ── Status Bar Helpers ─────────────────────────────────────────────────
 
 function buildStatusPayload(
-  state: LensState,
   checkStatuses?: {
     prettier: CheckStatus;
     linters: CheckStatus;
@@ -36,26 +22,20 @@ function buildStatusPayload(
     tsc: CheckStatus;
   },
 ): LensStatusPayload {
-  const payload: LensStatusPayload = {
-    prettier: state.prettierAvailable ? (checkStatuses?.prettier ?? "pending") : "skipped",
-    linters: state.detectedLinters.length > 0 ? (checkStatuses?.linters ?? "pending") : "skipped",
+  return {
+    prettier: checkStatuses?.prettier ?? "pending",
+    linters: checkStatuses?.linters ?? "pending",
     lsp: checkStatuses?.lsp ?? "pending",
-    tsc: state.tscAvailable ? (checkStatuses?.tsc ?? "pending") : "skipped",
+    tsc: checkStatuses?.tsc ?? "pending",
   };
-
-  return payload;
 }
 
 // ── Main Extension ─────────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI): void {
   const state: LensState = {
-    detectedLinters: [],
-    lspManager: null,
     config: DEFAULT_CONFIG,
     cwd: process.cwd(),
-    prettierAvailable: false,
-    tscAvailable: false,
   };
 
   let currentCtx: ExtensionContext | undefined;
@@ -71,7 +51,7 @@ export default function (pi: ExtensionAPI): void {
   }): void {
     if (!currentCtx?.hasUI) return;
 
-    const payload = buildStatusPayload(state, checkStatuses);
+    const payload = buildStatusPayload(checkStatuses);
     const json = JSON.stringify(payload);
 
     if (json !== lastStatus) {
@@ -87,49 +67,23 @@ export default function (pi: ExtensionAPI): void {
     currentCtx = ctx;
     state.config = loadConfig(ctx.cwd);
 
-    // Initialize LSP manager
-    state.lspManager = new LspManager(ctx.cwd, DEFAULT_IDLE_TIMEOUT_MS);
+    // Start or connect to daemon
+    await ensureDaemon(ctx.cwd);
 
-    // Detect availability in parallel
-    const [linters, prettier, tsc] = await Promise.all([
-      detectLinters(ctx.cwd),
-      isPrettierAvailable(ctx.cwd),
-      isTscAvailable(ctx.cwd),
-    ]);
-
-    state.detectedLinters = linters;
-    state.prettierAvailable = prettier;
-    state.tscAvailable = tsc;
-
-    // Notify UI with summary
+    // Notify UI
     if (ctx.hasUI) {
-      const parts: string[] = [];
-      if (state.detectedLinters.length > 0) {
-        const names = state.detectedLinters.map((l) => l.definition.label).join(", ");
-        parts.push(`linters: ${names}`);
-      }
-      if (state.prettierAvailable) parts.push("prettier");
-      if (state.tscAvailable) parts.push("tsc");
-      parts.push("lsp");
-
-      const summary = parts.length > 0 ? ` — ${parts.join(", ")}` : "";
-      ctx.ui.notify(`pi-lens: ready${summary}`, "info");
+      ctx.ui.notify("pi-lens: ready", "info");
     }
 
     publishStatus();
   });
 
   pi.on("session_shutdown", async () => {
-    if (state.lspManager) {
-      await state.lspManager.stopAll();
-      state.lspManager = null;
-    }
+    await stopDaemon(state.cwd);
     if (currentCtx?.hasUI) {
       currentCtx.ui.setStatus("pi-lens", undefined);
     }
-    state.detectedLinters = [];
-    state.prettierAvailable = false;
-    state.tscAvailable = false;
+    state.config = DEFAULT_CONFIG;
     currentCtx = undefined;
     lastStatus = undefined;
   });
@@ -151,7 +105,7 @@ export default function (pi: ExtensionAPI): void {
     if (files.length === 0) return undefined;
 
     try {
-      const result = await runChecks(files, ctx.cwd, state.config, state, ctx.signal);
+      const result = await runChecks(files, ctx.cwd, state.config);
 
       // Update status bar with check results
       publishStatus(result.statuses);

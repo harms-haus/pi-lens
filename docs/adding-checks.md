@@ -1,51 +1,49 @@
 # Adding New Check Types
 
-Guide for extending pi-lens with new code quality checks.
+Guide for extending the pi-lens / code-lens check pipeline with new code quality checks.
 
-## Overview
+## Architecture Overview
 
-pi-lens runs checks in a pipeline: prettier → linters → LSP diagnostics → tsc. Each check is encapsulated in a runner module and integrated into the `hook-runner.ts` orchestrator. Adding a new check involves creating a runner module, adding types, integrating into the pipeline, adding a config option, and writing tests.
+pi-lens is a **thin daemon client** — it does not execute checks itself. When files change, pi-lens resolves the affected file paths and sends a single `fullCheck` JSON-RPC request to the **code-lens daemon** (`@harms-haus/code-lens`). The daemon runs all checks concurrently and returns structured results.
 
-## Step-by-Step Guide
-
-### 1. Create a Runner Module
-
-Create a new file `src/new-check-runner.ts` following the pattern of existing runners (e.g., `prettier-runner.ts`, `tsc-runner.ts`).
-
-Your module should export:
-
-```typescript
-/** Check if the tool is available (e.g., installed, configured) */
-export async function isNewCheckAvailable(cwd: string): Promise<boolean>;
-
-/** Run the check on the given files */
-export async function runNewCheck(
-  files: string[],
-  cwd: string,
-  signal?: AbortSignal,
-): Promise<NewCheckResult[]>;
-
-/** (Optional) Result type */
-export interface NewCheckResult {
-  file: string;
-  // ... check-specific fields
-}
+```
+pi-lens (client)                          code-lens (daemon)
+─────────────────                         ──────────────────
+resolveFilesFromToolResult()   ──→  fullCheck request  ──→  fullCheck.ts
+filterFilesByPatterns()                                       ├─ runPrettierCheck()
+                                                              ├─ runLinterCheck()
+                                                              ├─ runLspCheck()
+                                                              └─ runTscCheck()
+                                         ←──  JSON-RPC response
+hook-runner.runChecks()        ←──  statuses + sections
 ```
 
-**Key guidelines:**
+**Check logic lives in the code-lens daemon.** pi-lens only handles file resolution, config loading, and result formatting.
 
-- **Never throw.** Return error information in the result object instead.
-- **Filter files.** Only process files with relevant extensions.
-- **Use `execCommand` from `spawn-utils.ts`.** It handles timeouts, maxBuffer, and AbortSignal.
-- **Be async.** All check functions should be async to avoid blocking the pipeline.
-- **Return structured results.** Don't format output in the runner — that's the hook-runner's job.
+## Where to Make Changes
 
-**Example (based on `tsc-runner.ts`):**
+| Change | Location | Repo |
+|--------|----------|------|
+| Check execution logic | `src/commands/fullCheck.ts` | `code-lens-cli` |
+| Standalone daemon command | `src/commands/<name>.ts` | `code-lens-cli` |
+| Command registration | `src/server.ts` (side-effect import) | `code-lens-cli` |
+| Check runner / availability detection | `src/linting/<name>-runner.ts` | `code-lens-cli` |
+| Config option (enable/disable) | `src/types.ts` + `src/config.ts` | `pi-lens` |
+| Status bar payload | `src/types.ts` (LensStatusPayload) | `pi-lens` |
+| Hook check statuses | `src/hook-runner.ts` (HookCheckStatuses) | `pi-lens` |
+| Unit tests | `src/__tests__/` | `code-lens-cli` |
+
+---
+
+## Step 1: Add the check to the code-lens daemon
+
+### 1a. Create a runner module
+
+Create `src/linting/<name>-runner.ts` in `code-lens-cli`. This module is responsible for availability detection and execution.
 
 ```typescript
-import * as path from "node:path";
-import * as fs from "node:fs";
-import { execCommand } from "./spawn-utils.js";
+// src/linting/newcheck-runner.ts
+import { execCommand } from "../spawn-utils.js";
 
 export interface NewCheckResult {
   issues: NewCheckIssue[];
@@ -53,31 +51,40 @@ export interface NewCheckResult {
   error?: string;
 }
 
+export interface NewCheckIssue {
+  file: string;
+  line: number;
+  column: number;
+  severity: "error" | "warning" | "info";
+  message: string;
+  code?: string;
+}
+
+/** Check if the tool is installed and configured */
 export async function isNewCheckAvailable(cwd: string): Promise<boolean> {
-  // Fast fs checks first, then version command
-  if (!fs.existsSync(path.join(cwd, "config-file"))) return false;
   try {
-    const result = await execCommand("tool", ["--version"], { cwd, timeout: 10_000 });
+    const result = await execCommand("newcheck", ["--version"], { cwd, timeout: 10_000 });
     return result.exitCode === 0;
   } catch {
     return false;
   }
 }
 
+/** Run the check and return structured results */
 export async function runNewCheck(
+  files: string[],
   cwd: string,
-  files?: string[],
   signal?: AbortSignal,
+  timeoutMs?: number,
 ): Promise<NewCheckResult> {
   const startTime = Date.now();
   try {
-    const result = await execCommand("tool", ["check", "--json"], {
+    const result = await execCommand("newcheck", ["check", "--json", ...files], {
       cwd,
-      timeout: 30_000,
+      timeout: timeoutMs ?? 30_000,
       signal,
     });
-    const issues = parseOutput(result.stdout, cwd);
-    return { issues: filterToFiles(issues, files), durationMs: Date.now() - startTime };
+    return { issues: parseOutput(result.stdout, cwd), durationMs: Date.now() - startTime };
   } catch (err) {
     return {
       issues: [],
@@ -88,122 +95,188 @@ export async function runNewCheck(
 }
 ```
 
-### 2. Add Types
+**Key guidelines:**
 
-Add your check's types to `src/types.ts`:
+- **Never throw.** Return errors in the result object.
+- **Filter to relevant files.** Only process files your tool supports.
+- **Use `execCommand`** from `spawn-utils.js` for timeouts, maxBuffer, and AbortSignal.
+- **Return structured data.** Don't format human-readable text — the command handler does that.
+
+### 1b. (Optional) Create a standalone daemon command
+
+If the check should also be callable individually (not just via `fullCheck`), create a command file at `src/commands/<name>.ts`:
 
 ```typescript
-/** Result of the new check */
-export interface NewCheckIssue {
-  file: string;
-  line: number;
-  column: number;
-  severity: "error" | "warning" | "info";
-  message: string;
-  code?: string;
+// src/commands/newcheck.ts
+import { registerCommand } from "../daemon/server.js";
+import { ok, err } from "../formatting/output.js";
+import { isNewCheckAvailable, runNewCheck } from "../linting/newcheck-runner.js";
+
+registerCommand("newcheck", async (params, _manager, cwd) => {
+  const files = params.files as string[] | undefined;
+  if (!Array.isArray(files) || files.length === 0) {
+    return err("Missing or empty 'files' parameter.");
+  }
+
+  const available = await isNewCheckAvailable(cwd);
+  if (!available) return ok("newcheck: not available", { available: false });
+
+  const result = await runNewCheck(files, cwd);
+  if (result.error) return ok(`newcheck: ${result.error}`, { error: result.error });
+
+  if (result.issues.length === 0) {
+    return ok(`newcheck: 0 issues (${result.durationMs}ms)`, { issues: [] });
+  }
+
+  // Format and return issues...
+  return ok(`newcheck: ${result.issues.length} issue(s)`, { issues: result.issues });
+});
+```
+
+### 1c. Register the command in `server.ts`
+
+In `code-lens-cli/src/server.ts`, add a side-effect import so the command's `registerCommand()` call runs at startup:
+
+```typescript
+import "./commands/newcheck.js";   // Add this line
+```
+
+### 1d. Integrate into `fullCheck.ts`
+
+This is the critical step. Open `src/commands/fullCheck.ts` and add your check to the concurrent pipeline:
+
+**1. Add a cache entry** alongside the existing module-level caches:
+
+```typescript
+import { isNewCheckAvailable, runNewCheck } from "../linting/newcheck-runner.js";
+
+// In the module-level cache section:
+let cachedNewCheckAvailable: boolean | null = null;
+
+// In ensureCache():
+const [linters, prettier, tsc, newCheck] = await Promise.all([
+  cachedLinters ?? detectLinters(cwd),
+  cachedPrettierAvailable ?? isPrettierAvailable(cwd),
+  cachedTscAvailable ?? isTscAvailable(cwd),
+  cachedNewCheckAvailable ?? isNewCheckAvailable(cwd),
+]);
+cachedNewCheckAvailable = newCheck;
+```
+
+**2. Add a check runner function** following the pattern of `runPrettierCheck`, `runTscCheck`, etc.:
+
+```typescript
+interface NewCheckCheckResult extends CheckResult {
+  issues?: NewCheckIssue[];
 }
-```
 
-Also update `LensStatusPayload` in `types.ts` to add a new `CheckStatus` field for the check category:
-
-```typescript
-export interface LensStatusPayload {
-  prettier: CheckStatus;
-  linters: CheckStatus;
-  lsp: CheckStatus;
-  tsc: CheckStatus;
-  newCheck: CheckStatus;  // Add this
-}
-```
-
-### 3. Add Config Option
-
-In `src/config.ts`:
-
-1. Add the new boolean field to the `LensConfig` interface in `types.ts`:
-
-```typescript
-export interface LensConfig {
-  // ... existing fields
-  newCheck: boolean;  // Enable/disable new check
-}
-```
-
-2. Add the default in `DEFAULT_CONFIG`:
-
-```typescript
-export const DEFAULT_CONFIG: LensConfig = {
-  // ... existing defaults
-  newCheck: true,
-};
-```
-
-3. Add the field to the boolean merge list in `mergeConfig()`:
-
-```typescript
-for (const key of [
-  "prettier", "linters", "lsp", "tsc", "bashDetection", "alwaysReport",
-  "newCheck",
-] as const) {
-  // ...
-}
-```
-
-### 4. Integrate into `hook-runner.ts`
-
-Add a new check function following the pattern of existing checks:
-
-```typescript
 async function runNewCheckCheck(
   files: string[],
   cwd: string,
-  config: LensConfig,
-  signal?: AbortSignal,
-): Promise<{ section: string | null; status: CheckStatus; hasIssues: boolean }> {
+  config: FullCheckConfig,
+  newCheckAvailable: boolean,
+): Promise<NewCheckCheckResult> {
   if (!config.newCheck) return { section: null, status: "skipped", hasIssues: false };
-
-  const available = await isNewCheckAvailable(cwd);
-  if (!available) return { section: null, status: "skipped", hasIssues: false };
+  if (!newCheckAvailable) return { section: null, status: "skipped", hasIssues: false };
 
   const relevantFiles = filterToRelevantExtensions(files);
   if (relevantFiles.length === 0) return { section: null, status: "skipped", hasIssues: false };
 
   try {
-    const result = await runNewCheck(cwd, relevantFiles, signal);
+    const result = await runNewCheck(relevantFiles, cwd, undefined, config.newCheckTimeoutMs);
     if (result.error) {
       return { section: `  ⚠ newcheck: ${result.error}`, status: "error", hasIssues: false };
     }
-    if (result.issues.length === 0) {
-      return { section: "  ✅ newcheck: 0 issues", status: "clean", hasIssues: false };
+    if (result.issues.length > 0) {
+      const formatted = formatNewCheckIssues(result.issues, cwd);
+      return {
+        section: `  ⚠ newcheck: ${result.issues.length} issue(s)\n${formatted}`,
+        status: "issues",
+        hasIssues: true,
+        issues: result.issues,
+      };
     }
-    // Format issues...
-    return {
-      section: `  ⚠ newcheck: ${result.issues.length} issue(s)\n${formattedIssues}`,
-      status: "issues",
-      hasIssues: true,
-    };
+    return { section: "  ✅ newcheck: 0 issues", status: "clean", hasIssues: false };
   } catch {
     return { section: "  ⚠ newcheck: check failed", status: "error", hasIssues: false };
   }
 }
 ```
 
-Then add it to the `runChecks()` function's `Promise.all` array:
+**3. Add to the `Promise.all` array** in the `fullCheck` handler and collect results:
 
 ```typescript
-const [prettier, linter, lsp, tsc, newCheck] = await Promise.all([
-  runPrettierCheck(...),
-  runLinterCheck(...),
-  runLspCheck(...),
-  runTscCheck(...),
-  runNewCheckCheck(...),
+const [prettierResult, linterResult, lspResult, tscResult, newCheckResult] = await Promise.all([
+  runPrettierCheck(safeFiles, cwd, config, cachedPrettierAvailable!),
+  runLinterCheck(safeFiles, cwd, config, cachedLinters!),
+  runLspCheck(safeFiles, cwd, config, manager),
+  runTscCheck(safeFiles, cwd, config, cachedTscAvailable!),
+  runNewCheckCheck(safeFiles, cwd, config, cachedNewCheckAvailable!),  // Add
 ]);
-statuses.newCheck = newCheck.status;
-if (newCheck.section) sections.push(newCheck.section);
-if (newCheck.hasIssues) hasIssues = true;
+
+// Collect results:
+statuses.newcheck = newCheckResult.status;
+if (newCheckResult.section) sections.push(newCheckResult.section);
+if (newCheckResult.hasIssues) hasIssues = true;
 ```
 
-Update the `HookCheckStatuses` interface to include your new status:
+**4. Extend `FullCheckConfig`** to accept the new check's config flag and any timeout:
+
+```typescript
+interface FullCheckConfig {
+  // ... existing fields
+  newCheck?: boolean;
+  newCheckTimeoutMs?: number;
+}
+```
+
+---
+
+## Step 2: Add config options in pi-lens
+
+This step is only needed if the new check should be toggleable via `.pi-lens.json`.
+
+### 2a. Update `LensConfig` in `src/types.ts`
+
+```typescript
+export interface LensConfig {
+  // ... existing fields
+  /** Enable/disable new check */
+  newCheck: boolean;
+  /** Timeout for new check (ms) */
+  newCheckTimeoutMs: number;
+}
+```
+
+### 2b. Update `src/config.ts`
+
+Add defaults:
+
+```typescript
+export const DEFAULT_CONFIG: LensConfig = {
+  // ... existing defaults
+  newCheck: true,
+  newCheckTimeoutMs: 30_000,
+};
+```
+
+Add to the merge lists in `mergeConfig()`:
+
+```typescript
+// Boolean fields
+for (const key of [
+  "prettier", "linters", "lsp", "tsc", "bashDetection", "alwaysReport",
+  "newCheck",  // Add
+] as const) { /* ... */ }
+
+// Number fields
+for (const key of [
+  "lspDelayMs", "maxConcurrency", "prettierTimeoutMs", "linterTimeoutMs", "tscTimeoutMs",
+  "newCheckTimeoutMs",  // Add
+] as const) { /* ... */ }
+```
+
+### 2c. Update `HookCheckStatuses` in `src/hook-runner.ts`
 
 ```typescript
 export interface HookCheckStatuses {
@@ -211,111 +284,107 @@ export interface HookCheckStatuses {
   linters: CheckStatus;
   lsp: CheckStatus;
   tsc: CheckStatus;
-  newCheck: CheckStatus;  // Add this
+  newCheck: CheckStatus;  // Add
 }
 ```
 
-### 5. Update the Status Bar
-
-In `src/index.ts`, update `buildStatusPayload()` to include the new check:
+In the `runChecks()` function, initialize the new status and pass the config flag to the daemon:
 
 ```typescript
-function buildStatusPayload(state: LensState, checkStatuses?: HookCheckStatuses): LensStatusPayload {
-  return {
-    // ... existing fields
-    newCheck: checkStatuses?.newCheck ?? "pending",
-  };
+const statuses: HookCheckStatuses = {
+  // ... existing
+  newCheck: "skipped",
+};
+
+// In the sendRequest params.config:
+config: {
+  // ... existing
+  newCheck: config.newCheck,
+  newCheckTimeoutMs: config.newCheckTimeoutMs,
+},
+```
+
+Extract the status from the daemon response:
+
+```typescript
+if (daemonStatuses) {
+  // ... existing
+  statuses.newCheck = daemonStatuses.newCheck;
 }
 ```
 
-Update `LensStatusPayload` in `types.ts` accordingly.
-
-### 6. Update the Entry Point
-
-In `src/index.ts`, update:
-
-1. **`session_start`** — Add availability detection:
+### 2d. Update `LensStatusPayload` in `src/types.ts`
 
 ```typescript
-const [linters, prettier, tsc, newCheck] = await Promise.all([
-  detectLinters(ctx.cwd),
-  isPrettierAvailable(ctx.cwd),
-  isTscAvailable(ctx.cwd),
-  isNewCheckAvailable(ctx.cwd),
-]);
-state.newCheckAvailable = newCheck;
+export interface LensStatusPayload {
+  prettier: CheckStatus;
+  linters: CheckStatus;
+  lsp: CheckStatus;
+  tsc: CheckStatus;
+  newCheck: CheckStatus;  // Add
+}
 ```
 
-2. **Session notification** — Include in the startup message.
+Then update `buildStatusPayload()` in `src/index.ts` to include `newCheck: checkStatuses?.newCheck ?? "pending"`.
 
-3. **`session_shutdown`** — Clean up any resources if needed.
+---
 
-### 7. Add Tests
+## Step 3: Write tests
 
-Create `src/__tests__/new-check-runner.test.ts`:
+All check logic tests belong in `code-lens-cli`:
+
+### 3a. Runner tests (`code-lens-cli`)
+
+Create `src/__tests__/newcheck-runner.test.ts`:
 
 ```typescript
 import { describe, it, expect, vi } from "vitest";
 
-// Mock spawn-utils
 vi.mock("../spawn-utils.js", () => ({
   execCommand: vi.fn(),
 }));
 
-// Mock fs
-vi.mock("node:fs", () => ({
-  existsSync: vi.fn(),
-}));
-
-describe("new-check-runner", () => {
+describe("newcheck-runner", () => {
   describe("isNewCheckAvailable", () => {
-    it("returns true when tool is installed and config exists", async () => {
-      // ...
-    });
-
-    it("returns false when config doesn't exist", async () => {
-      // ...
-    });
+    it("returns true when tool is installed", async () => { /* ... */ });
+    it("returns false when tool is missing", async () => { /* ... */ });
   });
 
   describe("runNewCheck", () => {
-    it("parses clean output correctly", async () => {
-      // ...
-    });
-
-    it("parses issues from output", async () => {
-      // ...
-    });
-
-    it("handles execution errors", async () => {
-      // ...
-    });
-
-    it("respects AbortSignal", async () => {
-      // ...
-    });
+    it("parses clean output", async () => { /* ... */ });
+    it("parses issues from JSON output", async () => { /* ... */ });
+    it("handles execution errors gracefully", async () => { /* ... */ });
+    it("respects AbortSignal", async () => { /* ... */ });
   });
 });
 ```
 
-Also update `src/__tests__/hook-runner.test.ts` to cover the new check integration.
+### 3b. fullCheck integration tests (`code-lens-cli`)
 
-### 8. Update Documentation
+Update or create tests for the `fullCheck` command that cover the new check being enabled, disabled, unavailable, and producing issues.
 
-- Add the new check to the README.md features list
-- Add config option to `docs/configuration.md`
-- Update the architecture docs if the module dependency graph changes
-- Update `CHANGELOG.md`
+### 3c. pi-lens config tests (`pi-lens`)
+
+Update existing config tests to verify the new fields merge correctly from `.pi-lens.json`.
+
+---
 
 ## Checklist
 
-- [ ] Runner module created (`src/new-check-runner.ts`)
-- [ ] Types added to `src/types.ts`
-- [ ] Config option added to `src/config.ts` and `LensConfig` interface
-- [ ] Check integrated into `src/hook-runner.ts` (`runChecks` function)
-- [ ] Status bar updated in `src/index.ts` and `LensStatusPayload`
-- [ ] Availability detection in `session_start`
-- [ ] Tests written (`src/__tests__/new-check-runner.test.ts`)
-- [ ] Hook-runner tests updated
+- [ ] Runner module created (`code-lens-cli/src/linting/<name>-runner.ts`)
+- [ ] (Optional) Standalone command created (`code-lens-cli/src/commands/<name>.ts`)
+- [ ] Command registered in `code-lens-cli/src/server.ts`
+- [ ] Check integrated into `code-lens-cli/src/commands/fullCheck.ts`
+- [ ] `FullCheckConfig` extended with new config flag + timeout
+- [ ] Availability detection cached in `ensureCache()`
+- [ ] `LensConfig` updated in `pi-lens/src/types.ts`
+- [ ] Defaults and merge updated in `pi-lens/src/config.ts`
+- [ ] `HookCheckStatuses` updated in `pi-lens/src/hook-runner.ts`
+- [ ] Config forwarded to daemon in `runChecks()`
+- [ ] `LensStatusPayload` updated in `pi-lens/src/types.ts`
+- [ ] Status bar updated in `pi-lens/src/index.ts`
+- [ ] Runner tests written in `code-lens-cli`
+- [ ] fullCheck integration tests updated in `code-lens-cli`
+- [ ] Config tests updated in `pi-lens`
+- [ ] Documentation updated (README, configuration docs)
 - [ ] All CI checks pass (`test`, `lint`, `typecheck`, `format:check`)
-- [ ] Documentation updated

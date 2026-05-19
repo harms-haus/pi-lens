@@ -1,36 +1,25 @@
 /**
  * Hook runner — main orchestrator for pi-lens
  *
- * Detects changed files from tool results and runs checks in order:
- * 1. Prettier (report-only — does NOT write)
- * 2. Linters (run detected linters)
- * 3. LSP diagnostics (with configurable delay)
- * 4. TSC (TypeScript type checking)
+ * Detects changed files from tool results and sends them to the code-lens
+ * daemon for a full check (prettier, linters, LSP diagnostics, tsc).
  *
- * Results are formatted and returned to be appended to the tool result.
+ * The daemon handles all check execution. This module is responsible for:
+ * 1. Resolving affected files from tool results
+ * 2. Sending a fullCheck request to the daemon
+ * 3. Formatting and returning the results
  */
 
 import * as path from "node:path";
 import * as fs from "node:fs";
-import type { Diagnostic } from "vscode-languageserver-types";
-import type { LensConfig, CheckStatus, DetectedLinter } from "./types.js";
-import type { LspManager } from "./lsp-manager.js";
+import type { LensConfig, CheckStatus } from "./types.js";
 import { detectFilesFromBashCommand } from "./bash-file-detector.js";
-import { isPrettierAvailable, runPrettier } from "./prettier-runner.js";
-import { isTscAvailable, runTsc } from "./tsc-runner.js";
-import { runLinters } from "./linter-runner.js";
-import { getLintersForFile } from "./linter-registry.js";
-import { formatIssues, summarizeIssues, countSeverities } from "./output-formatter.js";
-import { languageFromPath } from "./language-config.js";
+import { sendRequest, getSocketPath } from "@harms-haus/code-lens/client";
 
 /** Shared state passed from the extension entry point */
 export interface LensState {
-  detectedLinters: DetectedLinter[];
-  lspManager: LspManager | null;
   config: LensConfig;
   cwd: string;
-  prettierAvailable: boolean;
-  tscAvailable: boolean;
 }
 
 /** Per-check status trackers for status bar */
@@ -124,221 +113,20 @@ export function formatCleanMessage(fileCount: number, durationMs: number): strin
   return `🔍 pi-lens: ${fileCount} file(s) checked — all clean (${durationMs}ms)`;
 }
 
-// ── Individual Check Runners ────────────────────────────────────────────────
+// ── Daemon Communication ────────────────────────────────────────────────────
+
+let requestIdCounter = 0;
 
 /**
- * Run prettier check on the files.
- * Returns formatted section text, updated status, and whether issues were found.
- */
-async function runPrettierCheck(
-  files: string[],
-  cwd: string,
-  config: LensConfig,
-  prettierAvailable?: boolean,
-  signal?: AbortSignal,
-): Promise<{ section: string | null; status: CheckStatus; hasIssues: boolean }> {
-  if (!config.prettier) return { section: null, status: "skipped", hasIssues: false };
-
-  if (prettierAvailable === false) return { section: null, status: "skipped", hasIssues: false };
-  if (prettierAvailable === undefined) {
-    const available = await isPrettierAvailable(cwd);
-    if (!available) return { section: null, status: "skipped", hasIssues: false };
-  }
-
-  try {
-    const results = await runPrettier(files, cwd, signal, config.prettierTimeoutMs);
-    const needFormatting = results.filter((r) => r.changed);
-    const errored = results.filter((r) => r.error);
-
-    if (needFormatting.length > 0) {
-      const fileNames = needFormatting.map((r) => path.relative(cwd, r.file) || r.file);
-      return {
-        section: `  ⚠ prettier: ${needFormatting.length} file(s) need formatting\n    ${fileNames.join("\n    ")}`,
-        status: "issues",
-        hasIssues: true,
-      };
-    }
-
-    if (errored.length > 0) {
-      return {
-        section: `  ⚠ prettier: ${errored.length} file(s) had errors`,
-        status: "error",
-        hasIssues: false,
-      };
-    }
-
-    if (results.length > 0) {
-      return {
-        section: `  ✅ prettier: ${results.length} file(s) formatted`,
-        status: "clean",
-        hasIssues: false,
-      };
-    }
-
-    return { section: null, status: "clean", hasIssues: false };
-  } catch {
-    return { section: "  ⚠ prettier: check failed", status: "error", hasIssues: false };
-  }
-}
-
-/**
- * Run linter checks on the files.
- */
-async function runLinterCheck(
-  files: string[],
-  cwd: string,
-  config: LensConfig,
-  state: LensState,
-  signal?: AbortSignal,
-): Promise<{ section: string | null; status: CheckStatus; hasIssues: boolean }> {
-  if (!config.linters || state.detectedLinters.length === 0) {
-    return { section: null, status: "skipped", hasIssues: false };
-  }
-
-  const relevantLinters = getRelevantLinters(files, state.detectedLinters);
-  if (relevantLinters.length === 0) {
-    return { section: null, status: "skipped", hasIssues: false };
-  }
-
-  try {
-    const issues = await runLinters(
-      relevantLinters,
-      files,
-      cwd,
-      signal,
-      config.maxConcurrency,
-      config.linterTimeoutMs,
-    );
-    if (issues.length > 0) {
-      const summary = summarizeIssues(issues);
-      const formatted = formatIssues(issues, cwd);
-      return {
-        section: `  ⚠ ${summary}\n${formatted}`,
-        status: "issues",
-        hasIssues: true,
-      };
-    }
-    return { section: "  ✅ linters: 0 issues", status: "clean", hasIssues: false };
-  } catch {
-    return { section: "  ⚠ linters: check failed", status: "error", hasIssues: false };
-  }
-}
-
-/**
- * Run LSP diagnostic checks on the files.
- */
-async function runLspCheck(
-  files: string[],
-  cwd: string,
-  config: LensConfig,
-  state: LensState,
-  signal?: AbortSignal,
-): Promise<{ section: string | null; status: CheckStatus; hasIssues: boolean }> {
-  if (!config.lsp || !state.lspManager) {
-    return { section: null, status: "skipped", hasIssues: false };
-  }
-
-  const filesWithLanguage = files.filter((f) => languageFromPath(f) !== undefined);
-  if (filesWithLanguage.length === 0) {
-    return { section: null, status: "skipped", hasIssues: false };
-  }
-
-  try {
-    // Notify LSP about changed files
-    for (const file of filesWithLanguage) {
-      await state.lspManager.onFileChanged(file);
-    }
-
-    // Wait for diagnostics to settle
-    await sleep(config.lspDelayMs, signal);
-
-    // Collect diagnostics
-    const allDiags: { file: string; diagnostics: Diagnostic[] }[] = [];
-    for (const file of filesWithLanguage) {
-      const diags = await state.lspManager.getDiagnostics(file, true);
-      if (diags.length > 0) {
-        allDiags.push({ file, diagnostics: diags });
-      }
-    }
-
-    if (allDiags.length === 0) {
-      return { section: "  ✅ lsp: 0 diagnostics", status: "clean", hasIssues: false };
-    }
-
-    const totalDiags = allDiags.reduce((sum, d) => sum + d.diagnostics.length, 0);
-    const { errors, warnings } = countSeverities(allDiags.flatMap((d) => d.diagnostics));
-
-    const diagLines = formatDiagnosticSections(allDiags, cwd);
-    return {
-      section: `  ⚠ lsp: ${totalDiags} diagnostic(s) (${errors} error(s), ${warnings} warning(s))\n${diagLines}`,
-      status: "issues",
-      hasIssues: true,
-    };
-  } catch {
-    return { section: "  ⚠ lsp: check failed", status: "error", hasIssues: false };
-  }
-}
-
-/**
- * Run TypeScript type checking on the files.
- */
-async function runTscCheck(
-  files: string[],
-  cwd: string,
-  config: LensConfig,
-  tscAvailable?: boolean,
-  signal?: AbortSignal,
-): Promise<{ section: string | null; status: CheckStatus; hasIssues: boolean }> {
-  if (!config.tsc) return { section: null, status: "skipped", hasIssues: false };
-
-  if (tscAvailable === false) return { section: null, status: "skipped", hasIssues: false };
-  if (tscAvailable === undefined) {
-    const available = await isTscAvailable(cwd);
-    if (!available) return { section: null, status: "skipped", hasIssues: false };
-  }
-
-  const tsFiles = filterToTsFiles(files);
-  if (tsFiles.length === 0) return { section: null, status: "skipped", hasIssues: false };
-
-  try {
-    const tscResult = await runTsc(cwd, tsFiles, signal, config.tscTimeoutMs);
-
-    if (tscResult.error) {
-      return { section: `  ⚠ tsc: ${tscResult.error}`, status: "error", hasIssues: false };
-    }
-
-    if (tscResult.issues.length === 0) {
-      return { section: "  ✅ tsc: 0 errors", status: "clean", hasIssues: false };
-    }
-
-    const errorCount = tscResult.issues.filter((i) => i.severity === "error").length;
-    const warningCount = tscResult.issues.filter((i) => i.severity === "warning").length;
-    const summary = `${errorCount} error(s), ${warningCount} warning(s)`;
-    const issueLines = formatTscIssues(tscResult.issues, cwd);
-    return {
-      section: `  ⚠ tsc: ${summary}\n${issueLines}`,
-      status: "issues",
-      hasIssues: true,
-    };
-  } catch {
-    return { section: "  ⚠ tsc: check failed", status: "error", hasIssues: false };
-  }
-}
-
-// ── Main Orchestrator ───────────────────────────────────────────────────────
-
-/**
- * Run all applicable checks on the given files and return formatted results.
+ * Run all applicable checks on the given files via the code-lens daemon.
  *
- * All checks run concurrently via Promise.all for maximum throughput.
- * Each check is gated by its config flag and availability.
+ * Sends a single fullCheck request to the daemon, which runs prettier,
+ * linters, LSP diagnostics, and tsc concurrently.
  */
 export async function runChecks(
   files: string[],
   cwd: string,
   config: LensConfig,
-  state: LensState,
-  signal?: AbortSignal,
 ): Promise<HookResult> {
   const startTime = Date.now();
   const statuses: HookCheckStatuses = {
@@ -347,9 +135,6 @@ export async function runChecks(
     lsp: "skipped",
     tsc: "skipped",
   };
-
-  const sections: string[] = [];
-  let hasIssues = false;
 
   // Filter files by include/exclude patterns
   const filteredFiles = filterFilesByPatterns(
@@ -363,43 +148,60 @@ export async function runChecks(
     return { text: "", statuses, durationMs };
   }
 
-  // Run all checks concurrently — prettier, linters, LSP, and tsc are independent.
-  // LSP includes a configurable delay, so overlapping it hides that latency.
-  const [prettier, linter, lsp, tsc] = await Promise.all([
-    runPrettierCheck(filteredFiles, cwd, config, state.prettierAvailable, signal),
-    runLinterCheck(filteredFiles, cwd, config, state, signal),
-    runLspCheck(filteredFiles, cwd, config, state, signal),
-    runTscCheck(filteredFiles, cwd, config, state.tscAvailable, signal),
-  ]);
+  try {
+    const socketPath = getSocketPath(cwd);
+    const result = await sendRequest(socketPath, {
+      jsonrpc: "2.0",
+      method: "fullCheck",
+      params: {
+        files: filteredFiles,
+        config: {
+          prettier: config.prettier,
+          linters: config.linters,
+          lsp: config.lsp,
+          tsc: config.tsc,
+          lspDelayMs: config.lspDelayMs,
+          maxConcurrency: config.maxConcurrency,
+          prettierTimeoutMs: config.prettierTimeoutMs,
+          linterTimeoutMs: config.linterTimeoutMs,
+          tscTimeoutMs: config.tscTimeoutMs,
+        },
+      },
+      id: ++requestIdCounter,
+    });
 
-  statuses.prettier = prettier.status;
-  if (prettier.section) sections.push(prettier.section);
-  if (prettier.hasIssues) hasIssues = true;
+    if (result.isError) {
+      const durationMs = Date.now() - startTime;
+      return { text: "", statuses, durationMs };
+    }
 
-  statuses.linters = linter.status;
-  if (linter.section) sections.push(linter.section);
-  if (linter.hasIssues) hasIssues = true;
+    // Extract statuses from daemon response
+    const daemonStatuses = result.details.statuses as Record<string, CheckStatus> | undefined;
+    if (daemonStatuses) {
+      statuses.prettier = daemonStatuses.prettier;
+      statuses.linters = daemonStatuses.linters;
+      statuses.lsp = daemonStatuses.lsp;
+      statuses.tsc = daemonStatuses.tsc;
+    }
 
-  statuses.lsp = lsp.status;
-  if (lsp.section) sections.push(lsp.section);
-  if (lsp.hasIssues) hasIssues = true;
+    const hasIssues = result.details.hasIssues as boolean;
+    const sectionsText = result.content[0]?.text ?? "";
+    const durationMs = Date.now() - startTime;
 
-  statuses.tsc = tsc.status;
-  if (tsc.section) sections.push(tsc.section);
-  if (tsc.hasIssues) hasIssues = true;
+    // Build final text
+    const text = buildResultText(
+      filteredFiles.length,
+      durationMs,
+      hasIssues,
+      config.alwaysReport,
+      sectionsText,
+    );
 
-  const durationMs = Date.now() - startTime;
-
-  // Build final text
-  const text = buildResultText(
-    filteredFiles.length,
-    durationMs,
-    hasIssues,
-    config.alwaysReport,
-    sections,
-  );
-
-  return { text, statuses, durationMs };
+    return { text, statuses, durationMs };
+  } catch {
+    const durationMs = Date.now() - startTime;
+    return { text: "", statuses, durationMs };
+  }
 }
 
 // ── Internal Helpers ────────────────────────────────────────────────────────
@@ -410,31 +212,16 @@ function buildResultText(
   durationMs: number,
   hasIssues: boolean,
   alwaysReport: boolean,
-  sections: string[],
+  sectionsText: string,
 ): string {
   if (!hasIssues && alwaysReport) {
     return formatCleanMessage(fileCount, durationMs);
   }
   if (hasIssues) {
     const header = `🔍 pi-lens: ${fileCount} file(s) checked (${durationMs}ms)`;
-    return `${header}\n${sections.join("\n")}`;
+    return `${header}\n${sectionsText}`;
   }
   return "";
-}
-
-/** Get all linters that are relevant for at least one of the given files */
-function getRelevantLinters(files: string[], detected: DetectedLinter[]): DetectedLinter[] {
-  const relevant = new Set<string>();
-  const result: DetectedLinter[] = [];
-  for (const file of files) {
-    for (const linter of getLintersForFile(file, detected)) {
-      if (!relevant.has(linter.definition.name)) {
-        relevant.add(linter.definition.name);
-        result.push(linter);
-      }
-    }
-  }
-  return result;
 }
 
 /**
@@ -501,70 +288,4 @@ export function filterFilesByPatterns(
 
     return true;
   });
-}
-
-/** Filter files to TypeScript/JavaScript extensions */
-function filterToTsFiles(files: string[]): string[] {
-  const tsExts = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
-  return files.filter((f) => tsExts.has(path.extname(f).toLowerCase()));
-}
-
-/** Sleep for a given duration, abortable via signal */
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted) return Promise.resolve();
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true },
-    );
-  });
-}
-
-/** Format LSP diagnostic sections for output */
-function formatDiagnosticSections(
-  allDiags: { file: string; diagnostics: Diagnostic[] }[],
-  cwd: string,
-): string {
-  return allDiags
-    .map(({ file, diagnostics }) => {
-      const relativePath = path.relative(cwd, file) || file;
-      return diagnostics
-        .slice(0, 20)
-        .map((d) => {
-          const icon = d.severity === 1 ? "✗" : d.severity === 2 ? "⚠" : "ℹ";
-          const line = d.range.start.line + 1;
-          const col = d.range.start.character + 1;
-          const msg = d.message.split("\n")[0];
-          return `    ${icon} ${relativePath}:${line}:${col}: ${msg}`;
-        })
-        .join("\n");
-    })
-    .join("\n");
-}
-
-/** Format TSC issues for output */
-function formatTscIssues(
-  issues: {
-    file: string;
-    line: number;
-    column: number;
-    severity: string;
-    message: string;
-    code?: string;
-  }[],
-  cwd: string,
-): string {
-  return issues
-    .slice(0, 50)
-    .map((i) => {
-      const icon = i.severity === "error" ? "✗" : "⚠";
-      const relativePath = path.relative(cwd, i.file) || i.file;
-      return `    ${icon} ${relativePath}:${i.line}:${i.column}: ${i.message} (${i.code ?? "TS"})`;
-    })
-    .join("\n");
 }

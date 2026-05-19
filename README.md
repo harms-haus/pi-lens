@@ -86,7 +86,9 @@ All fields are optional — only include the ones you want to override. See [doc
 
 ## Supported Linters
 
-pi-lens detects and runs linters automatically. 11 linters are supported across 7 languages:
+> **Note:** Linter detection and execution is handled by the `@harms-haus/code-lens` daemon. pi-lens sends files to the daemon and receives formatted results.
+
+pi-lens (via the code-lens daemon) detects and runs linters automatically. 11 linters are supported across 7 languages:
 
 | Linter | Languages | Config Files | Detection |
 |--------|-----------|-------------|-----------|
@@ -104,7 +106,9 @@ pi-lens detects and runs linters automatically. 11 linters are supported across 
 
 ## Supported LSP Servers
 
-pi-lens queries LSP diagnostics for 33 languages:
+> **Note:** LSP server lifecycle, communication, and diagnostics are all managed by the `@harms-haus/code-lens` daemon.
+
+pi-lens (via the code-lens daemon) queries LSP diagnostics for 33 languages:
 
 | Language | Extensions | Server | Install |
 |----------|-----------|--------|---------|
@@ -144,7 +148,7 @@ pi-lens queries LSP diagnostics for 33 languages:
 
 ## How It Works
 
-pi-lens registers a single `tool_result` event hook. After every `write`, `edit`, or `bash` tool call:
+pi-lens is a **thin daemon client** that delegates all check execution to the [`@harms-haus/code-lens`](https://github.com/harms-haus/code-lens) daemon. It registers a single `tool_result` event hook. After every `write`, `edit`, or `bash` tool call:
 
 ```
 tool_result event
@@ -157,18 +161,28 @@ tool_result event
   │     ├─ write/edit → extract file path
   │     └─ bash → analyze command string for file-writing patterns
   │
-  └─ Run checks concurrently (Promise.all):
+  ├─ Filter files by include/exclude patterns
+  │
+  └─ Send fullCheck request to code-lens daemon (via Unix socket)
+        │
+        │  Daemon runs all checks concurrently:
         ├─ Prettier — check formatting (report-only)
         ├─ Linters — run detected linters
         ├─ LSP — query language server diagnostics
         └─ TSC — run tsc --noEmit
         │
-        └─ Append results to tool output
+        └─ Receive formatted results → append to tool output
 ```
 
-### Check execution
+### Daemon lifecycle
 
-Checks run **concurrently** via `Promise.all` — since prettier is report-only and doesn't write, all four checks are independent:
+- **Session start**: `ensureDaemon()` starts or connects to the code-lens daemon for the project directory
+- **Per check**: `runChecks()` sends a single `fullCheck` JSON-RPC request over a Unix socket. The daemon runs all four check types concurrently and returns formatted results plus per-check statuses
+- **Session shutdown**: `stopDaemon()` stops the daemon process
+
+### Check execution (handled by the daemon)
+
+All checks are executed by the `@harms-haus/code-lens` daemon, not by pi-lens itself:
 
 1. **Prettier** — Runs `prettier --check` on supported file types. Reports which files need formatting but does NOT modify them.
 2. **Linters** — Runs all detected linters relevant to the changed files. Reports errors, warnings, and info messages.
@@ -210,27 +224,16 @@ The status bar updates after session start and after every check run. Identical 
 
 ## Architecture
 
+pi-lens is a thin client that delegates all check execution to the `@harms-haus/code-lens` daemon. The daemon is a companion package that handles prettier, linters, LSP, and tsc — pi-lens only resolves files, loads config, and communicates with the daemon over a Unix socket.
+
 ```
 pi-lens/
 ├── src/
-│   ├── index.ts               # Extension entry point — session lifecycle, hook registration, status
-│   ├── types.ts               # All shared types
+│   ├── index.ts               # Extension entry point — session lifecycle, hook registration, status bar
+│   ├── hook-runner.ts         # File resolution, daemon communication, result formatting
 │   ├── config.ts              # .pi-lens.json loading and defaults
-│   ├── hook-runner.ts         # Main orchestrator — file resolution, check execution, formatting
-│   ├── bash-file-detector.ts  # Bash command analysis for file-writing patterns
-│   ├── prettier-runner.ts     # Prettier availability detection and --check execution
-│   ├── tsc-runner.ts          # TypeScript compiler detection and execution
-│   ├── linter-registry.ts     # Linter detection pipeline
-│   ├── linter-runner.ts       # Linter execution and output formatting
-│   ├── definitions.ts         # 11 linter definitions
-│   ├── parsers.ts             # 11 output parsers
-│   ├── output-formatter.ts    # Issue formatting and summarization
-│   ├── lsp-manager.ts         # LSP server lifecycle and diagnostics cache
-│   ├── lsp-client.ts          # JSON-RPC LSP client transport
-│   ├── lsp-client-methods.ts  # LSP protocol methods (init, didOpen, diagnostics)
-│   ├── lsp-protocol.ts        # LSP/JSON-RPC type definitions
-│   ├── language-config.ts     # 33 language server configurations
-│   └── spawn-utils.ts         # Child process spawning utilities
+│   ├── types.ts               # Shared types (LensConfig, CheckStatus, LensStatusPayload)
+│   └── bash-file-detector.ts  # Bash command analysis for file-writing patterns
 ├── skills/
 │   └── lens-hooks/
 │       └── SKILL.md           # Pi agent skill file

@@ -2,6 +2,21 @@
 
 Complete guide to configuring pi-lens via `.pi-lens.json`.
 
+## Daemon Architecture
+
+pi-lens delegates check execution to the **@harms-haus/code-lens** daemon. The daemon must be installed in your project:
+
+```bash
+npm install @harms-haus/code-lens
+```
+
+When checks run, pi-lens sends a `fullCheck` JSON-RPC request to the daemon over a Unix socket. The request includes the list of changed files and a subset of your configuration (check flags, timing, and timeouts) as `params.config`. The daemon owns the full check lifecycle — it starts and manages LSP servers on demand, runs prettier/linters/tsc, and returns results.
+
+This means:
+
+- **LSP server lifecycle** is managed entirely by the daemon, not by pi-lens itself. Settings like `lspDelayMs` are applied on the daemon side after it receives the request.
+- **File pattern filtering** (`includePatterns`, `excludePatterns`) and **behavioral flags** (`bashDetection`, `alwaysReport`) are handled client-side by pi-lens before sending files to the daemon — these are not forwarded.
+
 ## File Format
 
 pi-lens reads configuration from a `.pi-lens.json` file in your project root. The file is optional — if absent, all checks run with sensible defaults.
@@ -127,7 +142,7 @@ All fields are optional. Only include the ones you want to override from default
 |-------|-------|
 | **Type** | `number` |
 | **Default** | `1000` (1 second) |
-| **Description** | Milliseconds to wait after notifying LSP servers of file changes before querying diagnostics. This gives language servers time to process the changes and produce accurate diagnostics. |
+| **Description** | Milliseconds to wait after notifying LSP servers of file changes before querying diagnostics. This gives language servers time to process the changes and produce accurate diagnostics. This delay is applied by the @harms-haus/code-lens daemon, which manages its own LSP server lifecycle. |
 
 ```json
 { "lspDelayMs": 2000 }

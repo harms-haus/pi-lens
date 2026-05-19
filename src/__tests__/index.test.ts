@@ -2,17 +2,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 // Mock all internal modules
-vi.mock("../linter-registry.js", () => ({
-  detectLinters: vi.fn(),
-}));
-
-vi.mock("../lsp-manager.js", () => ({
-  LspManager: vi.fn().mockImplementation(() => ({
-    stopAll: vi.fn().mockResolvedValue(undefined),
-    onFileChanged: vi.fn(),
-    getDiagnostics: vi.fn(),
-  })),
-  DEFAULT_IDLE_TIMEOUT_MS: 300_000,
+vi.mock("@harms-haus/code-lens/client", () => ({
+  ensureDaemon: vi.fn().mockResolvedValue(undefined),
+  stopDaemon: vi.fn().mockResolvedValue(undefined),
+  getSocketPath: vi.fn().mockReturnValue("/tmp/code-lens-test.sock"),
+  sendRequest: vi.fn(),
 }));
 
 vi.mock("../config.js", () => ({
@@ -39,23 +33,9 @@ vi.mock("../hook-runner.js", () => ({
   runChecks: vi.fn(),
 }));
 
-vi.mock("../prettier-runner.js", () => ({
-  isPrettierAvailable: vi.fn(),
-}));
-
-vi.mock("../tsc-runner.js", () => ({
-  isTscAvailable: vi.fn(),
-}));
-
-vi.mock("../bash-file-detector.js", () => ({
-  detectFilesFromBashCommand: vi.fn(),
-}));
-
-import { detectLinters } from "../linter-registry.js";
-import { isPrettierAvailable } from "../prettier-runner.js";
-import { isTscAvailable } from "../tsc-runner.js";
 import { loadConfig, DEFAULT_CONFIG } from "../config.js";
 import { resolveFilesFromToolResult, runChecks } from "../hook-runner.js";
+import { ensureDaemon, stopDaemon } from "@harms-haus/code-lens/client";
 
 // Import the extension after mocks are set up
 import extension from "../index.js";
@@ -147,9 +127,6 @@ function createMockContext(overrides?: Partial<ExtensionContext>): ExtensionCont
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(detectLinters).mockResolvedValue([]);
-  vi.mocked(isPrettierAvailable).mockResolvedValue(false);
-  vi.mocked(isTscAvailable).mockResolvedValue(false);
   vi.mocked(loadConfig).mockReturnValue({ ...DEFAULT_CONFIG });
 });
 
@@ -172,7 +149,7 @@ describe("extension entry point", () => {
 // ── session_start ───────────────────────────────────────────────────
 
 describe("session_start", () => {
-  it("initializes state and detects linters", async () => {
+  it("initializes state and starts daemon", async () => {
     const { pi, handlers } = createMockPi();
     const ctx = createMockContext();
     extension(pi);
@@ -181,25 +158,19 @@ describe("session_start", () => {
     expect(handler).toBeDefined();
     await handler!({ type: "session_start", reason: "startup" }, ctx);
 
-    expect(detectLinters).toHaveBeenCalledWith("/home/user/project");
-    expect(isPrettierAvailable).toHaveBeenCalledWith("/home/user/project");
-    expect(isTscAvailable).toHaveBeenCalledWith("/home/user/project");
     expect(loadConfig).toHaveBeenCalledWith("/home/user/project");
+    expect(ensureDaemon).toHaveBeenCalledWith("/home/user/project");
   });
 
-  it("notifies UI with detected linters", async () => {
+  it("notifies UI with ready message", async () => {
     const { pi, handlers } = createMockPi();
     const ctx = createMockContext();
     extension(pi);
 
-    vi.mocked(detectLinters).mockResolvedValue([
-      { definition: { label: "ESLint", name: "eslint" } } as never,
-    ]);
-
     const handler = handlers.get("session_start")!;
     await handler({ type: "session_start", reason: "startup" }, ctx);
 
-    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("ESLint"), "info");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("ready"), "info");
   });
 
   it("publishes initial status", async () => {
@@ -227,7 +198,7 @@ describe("session_start", () => {
 // ── session_shutdown ────────────────────────────────────────────────
 
 describe("session_shutdown", () => {
-  it("stops LSP manager and clears state", async () => {
+  it("stops daemon and clears state", async () => {
     const { pi, handlers } = createMockPi();
     const ctx = createMockContext();
     extension(pi);
@@ -240,6 +211,7 @@ describe("session_shutdown", () => {
     const shutdownHandler = handlers.get("session_shutdown")!;
     await shutdownHandler({ type: "session_shutdown", reason: "quit" }, ctx);
 
+    expect(stopDaemon).toHaveBeenCalledWith("/home/user/project");
     expect(ctx.ui.setStatus).toHaveBeenCalledWith("pi-lens", undefined);
   });
 });
@@ -533,32 +505,10 @@ describe("tool_result hook", () => {
     expect(result).toBeUndefined();
   });
 
-  it("notifies UI with prettier and tsc when available", async () => {
+  it("publishes correct status with check results", async () => {
     const { pi, handlers } = createMockPi();
     const ctx = createMockContext();
     extension(pi);
-
-    vi.mocked(isPrettierAvailable).mockResolvedValue(true);
-    vi.mocked(isTscAvailable).mockResolvedValue(true);
-
-    const handler = handlers.get("session_start")!;
-    await handler({ type: "session_start", reason: "startup" }, ctx);
-
-    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("prettier"), "info");
-    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("tsc"), "info");
-  });
-
-  it("publishes correct status when all tools available with check results", async () => {
-    const { pi, handlers } = createMockPi();
-    const ctx = createMockContext();
-    extension(pi);
-
-    // Start session with all tools available
-    vi.mocked(isPrettierAvailable).mockResolvedValue(true);
-    vi.mocked(isTscAvailable).mockResolvedValue(true);
-    vi.mocked(detectLinters).mockResolvedValue([
-      { definition: { label: "ESLint", name: "eslint" } } as never,
-    ]);
 
     const startHandler = handlers.get("session_start")!;
     await startHandler({ type: "session_start", reason: "startup" }, ctx);

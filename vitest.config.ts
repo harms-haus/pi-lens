@@ -16,7 +16,6 @@ export default defineConfig({
         "src/**/*.d.ts",
         "src/types.ts",
         "src/types/**",
-        "src/lsp-protocol.ts",
       ],
       thresholds: {
         statements: 90,

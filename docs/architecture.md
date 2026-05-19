@@ -1,16 +1,39 @@
 # Architecture
 
-Deep-dive technical reference for the **pi-lens** extension.
+Deep-dive technical reference for the **pi-lens** extension and its companion **@harms-haus/code-lens** daemon.
 
-## 1. Overview
+## 1. System Overview
 
-pi-lens is a pi coding agent extension that provides unified code quality checking by automatically running prettier, linters, LSP diagnostics, and `tsc` on files changed by the agent.
+pi-lens is a thin client extension for the pi coding agent. It detects files changed by the agent and delegates all code quality checking to a long-running **@harms-haus/code-lens** daemon process. The two components communicate over a Unix domain socket (or named pipe on Windows) using JSON-RPC.
+
+```
+┌──────────────────────┐         Unix socket          ┌─────────────────────────────┐
+│  pi-lens (extension) │  ──── fullCheck request ───►  │  @harms-haus/code-lens      │
+│                      │                                │  (daemon)                   │
+│  • Hook registration │  ◄── JSON-RPC response ─────  │                             │
+│  • File resolution   │                                │  • Prettier                 │
+│  • Config loading    │                                │  • Linters (eslint, etc.)   │
+│  • Bash detection    │                                │  • LSP diagnostics          │
+│  • Status bar UI     │                                │  • tsc --noEmit             │
+└──────────────────────┘                                └─────────────────────────────┘
+```
+
+**pi-lens** is responsible only for:
+- Registering hooks (`session_start`, `session_shutdown`, `tool_result`)
+- Resolving which files were affected by a tool call
+- Starting/stopping the daemon
+- Formatting results for the agent
+
+**@harms-haus/code-lens** (the daemon) is responsible for:
+- Executing all checks (prettier, linters, LSP diagnostics, tsc)
+- Caching linter detection, tool availability, and LSP server instances across requests
+- Managing LSP server lifecycle (lazy start, idle timeout, diagnostics cache)
 
 pi-lens exposes a single integration point:
 
 | Integration | Event | Description |
 |---|---|---|
-| Event Hook | `tool_result` | Runs all checks on files affected by `write`, `edit`, or `bash` tool calls |
+| Event Hook | `tool_result` | Resolves affected files and sends them to the daemon for a full check |
 
 The extension is loaded by pi directly from TypeScript. The entry point is `src/index.ts` (default export function), referenced by the `pi.extensions` array in `package.json`:
 
@@ -22,69 +45,67 @@ The extension is loaded by pi directly from TypeScript. The entry point is `src/
 }
 ```
 
-All state is held in a `LensState` object within module-level closures, scoped per session.
-
 ---
 
-## 2. Module Dependency Graph
+## 2. Module Descriptions
 
-```
-index.ts
-├── hook-runner.ts
-│   ├── bash-file-detector.ts
-│   ├── prettier-runner.ts
-│   │   └── spawn-utils.ts
-│   ├── tsc-runner.ts
-│   │   └── spawn-utils.ts
-│   ├── linter-runner.ts
-│   │   ├── linter-registry.ts
-│   │   │   ├── definitions.ts
-│   │   │   │   └── parsers.ts
-│   │   │   └── types.ts
-│   │   ├── output-formatter.ts
-│   │   └── spawn-utils.ts
-│   ├── output-formatter.ts
-│   ├── linter-registry.ts      (getLintersForFile)
-│   ├── lsp-manager.ts          (onFileChanged, getDiagnostics)
-│   │   ├── lsp-client-methods.ts
-│   │   │   └── lsp-client.ts
-│   │   │       └── lsp-protocol.ts
-│   │   └── language-config.ts
-│   └── types.ts
-├── linter-registry.ts          (detectLinters)
-├── lsp-manager.ts              (LspManager constructor)
-├── prettier-runner.ts          (isPrettierAvailable)
-├── tsc-runner.ts               (isTscAvailable)
-├── config.ts                   (loadConfig)
-└── types.ts                     (shared by all)
-```
+pi-lens consists of five modules:
 
-**Module boundaries:**
+### `index.ts` — Extension Entry Point
 
-- **`types.ts`** — Pure type declarations. No runtime code. Shared across all modules.
-- **`config.ts`** — Loads and validates `.pi-lens.json`. Depends only on `types.ts`.
-- **`spawn-utils.ts`** — Child process spawning with timeout, maxBuffer, and AbortSignal support. Exports `getSanitizedEnv()` which builds an allowlisted environment for all child processes. Standalone utility.
-- **`definitions.ts`** — Static `LINTER_DEFINITIONS[]` array. Imports parsers but is otherwise self-contained.
-- **`parsers.ts`** — Pure functions `(stdout, cwd) => LintIssue[]`. No imports other than `node:path` and types.
-- **`linter-registry.ts`** — Detection and file discovery. Depends on `definitions.ts` (for definitions) and `types.ts`.
-- **`linter-runner.ts`** — Process spawning and output formatting. Depends on `linter-registry.ts`, `output-formatter.ts`, and `spawn-utils.ts`.
-- **`output-formatter.ts`** — Issue formatting and summarization. Depends only on `types.ts`.
-- **`bash-file-detector.ts`** — Regex-based bash command analysis. Standalone (depends only on `node:path`, `node:os`).
-- **`prettier-runner.ts`** — Prettier availability detection and `--check` execution. Depends on `spawn-utils.ts` and `types.ts`.
-- **`tsc-runner.ts`** — TypeScript compiler detection and execution. Depends on `spawn-utils.ts` and `types.ts`.
-- **`lsp-protocol.ts`** — JSON-RPC and LSP type definitions. No runtime code.
-- **`lsp-client.ts`** — LSP client transport (JSON-RPC over stdio). Depends on `lsp-protocol.ts`.
-- **`lsp-client-methods.ts`** — LSP protocol methods (initialize, didOpen, didChange, diagnostics). Depends on `lsp-client.ts`.
-- **`lsp-manager.ts`** — Server lifecycle, file tracking, diagnostics cache. Depends on `lsp-client-methods.ts` and `language-config.ts`.
-- **`language-config.ts`** — 33 language server configurations. Depends on `types.ts`.
-- **`hook-runner.ts`** — Main orchestrator. Imports from all runners and formatters.
-- **`index.ts`** — Extension entry point. Imports from all modules except parsers and definitions directly (accessed transitively).
+Registers three hooks and manages the daemon lifecycle:
+
+- **`session_start`** — Loads config via `loadConfig()`, calls `ensureDaemon()` to start or connect to the daemon, publishes initial status.
+- **`session_shutdown`** — Calls `stopDaemon()` to shut down the daemon, clears status bar, resets state.
+- **`tool_result`** — Filters to `write`/`edit`/`bash` tool calls only. Resolves affected files, sends them to the daemon via `runChecks()`, and appends formatted results to the tool result content.
+
+Imports from: `@harms-haus/code-lens/client` (daemon lifecycle), `config.ts`, `hook-runner.ts`, `types.ts`.
+
+### `hook-runner.ts` — Daemon Client & File Resolution
+
+The core orchestration module. Responsible for:
+
+1. **File resolution** — `resolveFilesFromToolResult()` extracts file paths from tool results:
+   - `write`/`edit` → reads `input.path`
+   - `bash` → delegates to `detectFilesFromBashCommand()`
+   - Filters to paths contained within `cwd` (path traversal prevention)
+   - Deduplicates and verifies files exist on disk
+
+2. **File filtering** — `filterFilesByPatterns()` applies `includePatterns`/`excludePatterns` from config using compiled glob regexes (cached for the session).
+
+3. **Daemon communication** — `runChecks()` sends a `fullCheck` JSON-RPC request to the daemon over the Unix socket. Parses the response to extract per-check statuses and formatted issue text.
+
+4. **Result formatting** — Builds the final text to append to the tool result, including a header with file count and duration.
+
+Exports: `resolveFilesFromToolResult()`, `runChecks()`, `filterFilesByPatterns()`, `LensState`, `HookResult`, `HookCheckStatuses`.
+
+### `types.ts` — Core Types
+
+Pure type declarations with no runtime code:
+
+- **`LensConfig`** — Configuration shape (check toggles, patterns, timeouts, etc.)
+- **`CheckStatus`** — Union type: `"pending" | "running" | "clean" | "issues" | "error" | "skipped"`
+- **`LensStatusPayload`** — Status bar payload with a `CheckStatus` per check category
+
+### `config.ts` — Configuration Loader
+
+Reads `.pi-lens.json` from the project root and merges with defaults:
+
+- Returns `DEFAULT_CONFIG` if the file is missing, unreadable, or contains malformed JSON
+- Type-safe merging: only known keys with correct types are applied; unknown keys and wrong-typed values are silently ignored
+- Warnings are printed to stderr for parse errors
+
+### `bash-file-detector.ts` — Bash Command Analysis
+
+Regex-based analysis of bash command strings to detect file-writing patterns. Runs client-side because it operates on the raw tool result before any daemon communication.
+
+Supports: `sed -i`, `cat >`, `echo >`, `tee`, `perl -i`, `awk >`, `python -c >`, `dd of=`, `mv`, `cp`, and generic shell redirects (`>`/`>>`).
 
 ---
 
 ## 3. Data Flow
 
-### Hook Flow
+### Hook Flow (tool_result)
 
 ```
 Agent calls write/edit/bash tool
@@ -103,52 +124,62 @@ Agent calls write/edit/bash tool
          ├─ resolveFilesFromToolResult()
          │     ├─ write/edit → input.path
          │     ├─ bash → detectFilesFromBashCommand()
-         │     └─ Filter to paths within cwd (path traversal prevention)
+         │     ├─ Filter to paths within cwd (path traversal prevention)
+         │     └─ Deduplicate + verify files exist on disk
          │
          ├─ filterFilesByPatterns()
          │     └─ Apply include/exclude glob patterns (cached regex)
          │
-         └─ runChecks(filteredFiles, cwd, config, state, signal)
+         └─ runChecks(filteredFiles, cwd, config)
                │
-               ├─ 1. runPrettierCheck()
-               │     └─ isPrettierAvailable() + runPrettier()
+               ├─ getSocketPath(cwd) → Unix socket path
                │
-               ├─ 2. runLinterCheck()
-               │     └─ getRelevantLinters() + runLinters()
+               ├─ sendRequest(socketPath, {
+               │     jsonrpc: "2.0",
+               │     method: "fullCheck",
+               │     params: { files, config }
+               │   })
+               │     │
+               │     ▼  ┌──────────────────────────────────────┐
+               │        │ Daemon runs checks concurrently:      │
+               │        │  1. prettier --check                  │
+               │        │  2. linters (eslint, etc.)            │
+               │        │  3. LSP diagnostics (with delay)      │
+               │        │  4. tsc --noEmit                      │
+               │        └──────────────────────────────────────┘
+               │     │
+               │     ▼
+               │   Response: { content, details: { statuses, hasIssues } }
                │
-               ├─ 3. runLspCheck()
-               │     └─ lspManager.onFileChanged()
-               │        + sleep(lspDelayMs)
-               │        + lspManager.getDiagnostics()
-               │
-               ├─ 4. runTscCheck()
-               │     └─ isTscAvailable() + runTsc()
-               │
-               └─ Format results → append to tool_result content
+               ├─ Extract statuses from daemon response
+               ├─ Build result text (header + issue sections)
+               └─ Return HookResult { text, statuses, durationMs }
+
+  index.ts appends result.text to tool result content
 ```
 
 ### State Flow
 
 ```
 session_start
+  ├─ state.cwd = ctx.cwd
+  ├─ currentCtx = ctx
   ├─ loadConfig(cwd)              → state.config
-  ├─ new LspManager(cwd)          → state.lspManager
-  ├─ detectLinters(cwd)           → state.detectedLinters
-  ├─ isPrettierAvailable(cwd)     → state.prettierAvailable
-  ├─ isTscAvailable(cwd)          → state.tscAvailable
+  ├─ ensureDaemon(cwd)            → starts daemon if not running
+  ├─ ctx.ui.notify('pi-lens: ready', 'info')
   └─ publishStatus()              → ui.setStatus("pi-lens", payload)
 
 tool_result
   ├─ resolveFilesFromToolResult()
-  ├─ runChecks(files, ...)
+  ├─ runChecks(files, cwd, config)
   │     └─ Returns HookResult { text, statuses, durationMs }
   ├─ publishStatus(statuses)      → ui.setStatus("pi-lens", payload)
   └─ Return modified tool result with appended content
 
 session_shutdown
-  ├─ lspManager.stopAll()
+  ├─ stopDaemon(cwd)              → SIGTERM daemon, clean socket/metadata
   ├─ ui.setStatus("pi-lens", undefined)
-  └─ Clear all state
+  └─ Reset state to defaults
 ```
 
 ---
@@ -157,124 +188,144 @@ session_shutdown
 
 ### LensState
 
-All session state is held in a single `LensState` object:
+Client-side state is minimal — just config and the working directory:
 
 ```typescript
 interface LensState {
-  detectedLinters: DetectedLinter[];   // Linters detected at session start
-  lspManager: LspManager | null;       // LSP server manager
-  config: LensConfig;                  // Merged configuration
-  cwd: string;                         // Current working directory
-  prettierAvailable: boolean;          // Whether prettier is installed
-  tscAvailable: boolean;               // Whether tsc + tsconfig.json exist
+  config: LensConfig;
+  cwd: string;
 }
 ```
 
-The state object is initialized in the default export function of `index.ts` and passed through to `runChecks()` in `hook-runner.ts`. All mutations happen during `session_start` and `session_shutdown`.
+All check execution state (linter detection, tool availability, LSP server instances) lives in the daemon and is cached there across requests. The client holds no references to check runners, LSP managers, or detection results.
 
-#### Cached Availability Booleans
+### Closure State in index.ts
 
-`prettierAvailable` and `tscAvailable` are probed once during `session_start` (in parallel alongside linter detection) and cached in `LensState`. The individual check runners (`runPrettierCheck`, `runTscCheck`) receive these cached values as parameters. If the value is already `false`, the check is immediately skipped without re-probing. If the value is `undefined` (not cached), the runner falls back to probing availability on demand. In practice, `index.ts` always populates both fields at session start, so the on-demand path is a safety net.
-
-#### Glob Regex Caching
-
-`filterFilesByPatterns` compiles glob patterns into `RegExp` objects. To avoid re-compiling the same patterns on every `tool_result` hook, compiled regexes are cached in a module-level `globRegexCache` Map (keyed by the joined patterns string). Since include/exclude patterns come from config and don't change during a session, this cache grows to at most two entries (one for includes, one for excludes) and is reused for the entire session lifetime.
-
-### Sanitized Environment
-
-All child processes spawned by pi-lens (prettier, linters, tsc, LSP servers) receive a sanitized environment via `getSanitizedEnv()` from `spawn-utils.ts`. Instead of inheriting the full `process.env`, only an allowlisted set of variables is passed:
-
-- **Essential:** `PATH`, `HOME`, `LANG`, `LC_ALL`, `TERM`, `NODE_PATH`
-- **Language-specific:** `GOPATH`, `PYTHONPATH`, `CARGO_HOME`, `RUSTUP_HOME`
-
-This prevents leaking sensitive or unnecessary environment variables (e.g., API keys, tokens) to child processes.
-
-### Path Containment Validation
-
-`resolveFilesFromToolResult` filters resolved absolute paths to only those that fall within the project's `cwd`. After resolving to absolute paths and normalizing, each path is checked with `startsWith(normalizedCwd)` or strict equality with `cwd`. This prevents path traversal — a bash command like `echo > /etc/something` or a relative path escaping the project root is silently dropped from the file set.
-
-### Additional Closure State
-
-Beyond `LensState`, `index.ts` maintains:
+Beyond `LensState`, `index.ts` maintains two module-level variables:
 
 ```typescript
 let currentCtx: ExtensionContext | undefined;   // Current session context
 let lastStatus: string | undefined;             // Last published status JSON (for dedup)
 ```
 
-### Status Payload
+Status deduplication is performed by comparing JSON strings — if the status payload hasn't changed, `ui.setStatus` is not called again.
 
-The status bar receives a JSON-stringified `LensStatusPayload`:
+### Glob Regex Caching
 
-```typescript
-interface LensStatusPayload {
-  prettier: CheckStatus;         // "pending" | "running" | "clean" | "issues" | "error" | "skipped"
-  linters: CheckStatus;          // Aggregate linter status
-  lsp: CheckStatus;              // Aggregate LSP status
-  tsc: CheckStatus;              // Same as prettier
+`filterFilesByPatterns` compiles glob patterns into `RegExp` objects. Compiled regexes are cached in a module-level `globRegexCache` Map keyed by the joined patterns string. Since patterns come from config and don't change during a session, this cache grows to at most two entries and is reused for the entire session.
+
+### Daemon-Side Caching
+
+The daemon caches the following across `fullCheck` requests (invalidated on cwd change):
+
+| Cache | Type | Populated By |
+|---|---|---|
+| `cachedLinters` | `DetectedLinter[]` | `detectLinters(cwd)` |
+| `cachedPrettierAvailable` | `boolean` | `isPrettierAvailable(cwd)` |
+| `cachedTscAvailable` | `boolean` | `isTscAvailable(cwd)` |
+| LSP server instances | `LspManager` | Maintained across requests with idle-timeout eviction |
+
+This means the first `fullCheck` request pays the detection cost, but subsequent requests reuse cached results. The daemon remains warm as long as the session is active.
+
+---
+
+## 5. Daemon Lifecycle
+
+### Socket Path Resolution
+
+Each project directory gets a unique socket path derived from a SHA-256 hash of the cwd:
+
+- **Unix:** `$TMPDIR/code-lens-{hash}.sock`
+- **Windows:** `\\.\pipe\code-lens-{hash}`
+
+The same hash is used for the metadata file at `~/.code-lens/{hash}.json`, which stores the daemon PID, socket path, version, and cwd.
+
+### `ensureDaemon(cwd)`
+
+Called during `session_start`. Ensures a daemon is running for the project:
+
+1. Probes the socket to check if a daemon is already listening.
+2. If running, reads metadata and compares `version` against `DAEMON_VERSION`. Restarts on version mismatch.
+3. If not running, cleans stale socket/metadata files and spawns a new daemon process.
+4. Polls the socket every 50ms (up to 10s) until the daemon is ready.
+5. Writes metadata (PID, socket path, version, cwd) to disk.
+
+The daemon is spawned as a detached child process (`child.unref()`), so it outlives the parent. It receives the socket path and cwd via environment variables (`CODE_LENS_SOCKET_PATH`, `CODE_LENS_CWD`).
+
+### `stopDaemon(cwd)`
+
+Called during `session_shutdown`:
+
+1. Reads metadata to get the daemon PID.
+2. Sends `SIGTERM` to the daemon process.
+3. Waits 100ms for the OS to clean up the socket file.
+4. Removes socket and metadata files.
+
+### Daemon Communication Protocol
+
+Requests are sent as single-line JSON (NDJSON) over the Unix socket:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "fullCheck",
+  "params": {
+    "files": ["/path/to/file.ts"],
+    "config": {
+      "prettier": true,
+      "linters": true,
+      "lsp": true,
+      "tsc": true,
+      "lspDelayMs": 1000,
+      "maxConcurrency": 4,
+      "prettierTimeoutMs": 30000,
+      "linterTimeoutMs": 30000,
+      "tscTimeoutMs": 60000
+    }
+  },
+  "id": 1
 }
 ```
 
-Status is published (1) on session start, (2) after every `tool_result` hook, and (3) cleared on shutdown. Deduplication is performed by comparing JSON strings.
+The daemon responds with a `CommandResult`:
+
+```json
+{
+  "id": 1,
+  "result": {
+    "isError": false,
+    "content": [{ "type": "text", "text": "..." }],
+    "details": {
+      "statuses": { "prettier": "issues", "linters": "clean", "lsp": "skipped", "tsc": "clean" },
+      "hasIssues": true,
+      "fileCount": 2,
+      "durationMs": 342
+    }
+  }
+}
+```
+
+Requests timeout after 60 seconds. Socket connection errors (daemon not running, socket stale) cause the hook to silently return the original tool result unmodified.
 
 ---
 
-## 5. LSP Server Lifecycle
+## 6. Error Handling
 
-LSP servers are managed by `LspManager` with a lazy-start, idle-timeout pattern:
+pi-lens follows a **never-block** principle:
 
-### Lazy Start
+1. **Hook failures are silently swallowed.** If `runChecks()` throws (daemon unavailable, socket error, timeout), the `catch` block in `index.ts` returns `undefined`, and the original tool result passes through unmodified.
+2. **Daemon unavailable → graceful skip.** If the daemon cannot be reached, `sendRequest` rejects. The error is caught in `runChecks`, which returns an empty `HookResult` with all statuses set to `"skipped"`.
+3. **Malformed config falls back to defaults.** A broken `.pi-lens.json` produces a warning on stderr but doesn't crash.
+4. **Individual check failures are contained by the daemon.** If prettier fails, linters/LSP/tsc still run — each check runner has its own try/catch and returns an independent status.
+5. **Daemon request errors return `isError: true`.** The daemon wraps internal failures into a structured error response rather than crashing. pi-lens checks `result.isError` and returns an empty result if set.
 
-1. When `onFileChanged(file)` is called, `LspManager` looks up the language config for the file.
-2. If no server is running for that language, one is started:
-   - Spawns the LSP server process via `LspClient`
-   - Sends the `initialize` request with `rootUri`
-   - Sends `initialized` notification
-3. The file is opened via `textDocument/didOpen` (or updated via `textDocument/didChange` if already tracked).
-4. Diagnostics are requested via pull model (`textDocument/diagnostic`).
-
-### Idle Timeout
-
-- Each server tracks `lastActive` timestamp.
-- An interval timer (`IDLE_CHECK_INTERVAL_MS`, 60s) checks for idle servers.
-- Servers idle longer than `DEFAULT_IDLE_TIMEOUT_MS` (5 min) are shut down gracefully.
-- Graceful shutdown: `shutdown` request → `exit` notification → force kill after delay.
-
-### Diagnostics Cache
-
-- Push-model diagnostics arrive via `textDocument/publishDiagnostics` notifications and are cached per URI.
-- Pull-model diagnostics are requested explicitly via `textDocument/diagnostic`.
-- `getDiagnostics(file, refresh)` returns cached diagnostics (optionally refreshing first).
-- Cache is invalidated when files change.
-
-### File Tracking
-
-- `ensureFileOpen(client, config, filePath, content)` opens files and tracks versions.
-- Version numbers increment on each `didChange` notification.
-- Maximum tracked files: 200 per server (oldest entries evicted).
-
----
-
-## 6. Check Execution Order
-
-Checks run **concurrently** via `Promise.all` for maximum throughput. Since prettier is report-only (it never writes changes), all four checks are independent and can safely execute in parallel:
-
-1. **Prettier** — Report-only. Detects files needing formatting. No files are modified.
-2. **Linters** — Run detected linters on changed files. Independent of prettier since prettier doesn't write.
-3. **LSP Diagnostics** — Queries language servers after a configurable delay (`lspDelayMs`, default 1s). This delay allows servers to process changes.
-4. **TSC** — Runs `tsc --noEmit` for full project type-checking.
-
-Each check is gated by:
-- Its config flag (`config.prettier`, `config.linters`, `config.lsp`, `config.tsc`)
-- Runtime availability (is the tool installed? are there relevant files?)
-
-When a check is not applicable (disabled, not installed, no matching files), its status is set to `"skipped"` and no section is added to the output.
+This ensures pi-lens is purely advisory — it can never break the agent's primary workflow.
 
 ---
 
 ## 7. Bash File Detection
 
-`bash-file-detector.ts` analyzes bash command strings to detect file-writing patterns:
+`bash-file-detector.ts` analyzes bash command strings to detect file-writing patterns. This runs client-side because it operates on the raw tool result before any daemon communication.
 
 ### Supported Patterns
 
@@ -295,7 +346,7 @@ When a check is not applicable (disabled, not installed, no matching files), its
 
 ### Multi-Command Handling
 
-Commands are split on `&&`, `;`, `|`, and newlines. Each segment is processed independently. For example:
+Commands are split on `&&`, `;`, `|`, and newlines. Each segment is processed independently:
 
 ```
 echo "a" > a.txt && echo "b" > b.txt
@@ -311,18 +362,8 @@ This is best-effort detection. It cannot handle:
 - Commands inside subshells or eval strings
 - Indirect file operations (`xargs -I{} mv {} {}.bak`)
 
-When unsure, files are conservatively included in the `written` set.
+When unsure, files are conservatively included in the `written` set to avoid missing real changes.
 
----
+### Toggle
 
-## 8. Error Handling Philosophy
-
-pi-lens follows a **never-block** principle:
-
-1. **Hook failures are silently swallowed.** The original tool result is always returned unmodified.
-2. **Individual check failures don't abort the pipeline.** If prettier fails, linters/LSP/tsc still run.
-3. **Missing tools are silently skipped.** No prettier, no linters, no tsc? No problem — the applicable checks report `"skipped"`.
-4. **Malformed config falls back to defaults.** A broken `.pi-lens.json` produces a warning on stderr but doesn't crash.
-5. **LSP server errors are contained.** A crashed server is detected and restarted on next use.
-
-This ensures that pi-lens is purely advisory — it can never break the agent's primary workflow.
+Bash file detection is controlled by the `bashDetection` config flag (default: `true`). When disabled, bash tool results produce no files for checking.
