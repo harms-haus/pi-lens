@@ -14,14 +14,12 @@ import type { LensState } from "./hook-runner.js";
 
 // ── Status Bar Helpers ─────────────────────────────────────────────────
 
-function buildStatusPayload(
-  checkStatuses?: {
-    prettier: CheckStatus;
-    linters: CheckStatus;
-    lsp: CheckStatus;
-    tsc: CheckStatus;
-  },
-): LensStatusPayload {
+function buildStatusPayload(checkStatuses?: {
+  prettier: CheckStatus;
+  linters: CheckStatus;
+  lsp: CheckStatus;
+  tsc: CheckStatus;
+}): LensStatusPayload {
   return {
     prettier: checkStatuses?.prettier ?? "pending",
     linters: checkStatuses?.linters ?? "pending",
