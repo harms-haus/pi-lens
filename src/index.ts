@@ -13,6 +13,7 @@ import { loadConfig, DEFAULT_CONFIG } from "./config.js";
 import { resolveFilesFromToolResult, runChecks } from "./hook-runner.js";
 import type { CheckStatus, LensStatusPayload } from "./types.js";
 import type { LensState } from "./hook-runner.js";
+import { isRecord } from "./helpers.js";
 
 // ── Status Bar Helpers ─────────────────────────────────────────────────
 
@@ -35,23 +36,16 @@ function buildStatusPayload(checkStatuses?: {
 const SUBAGENT_CHECK_COOLDOWN_MS = 5000;
 
 function hasToolActivity(partialResult: unknown): boolean {
-  if (typeof partialResult !== "object" || partialResult === null) return false;
-  const pr = partialResult as Record<string, unknown>;
-  if (typeof pr.details !== "object" || pr.details === null) return false;
-  const details = pr.details as Record<string, unknown>;
+  if (!isRecord(partialResult)) return false;
+  const details = partialResult.details;
+  if (!isRecord(details)) return false;
   const windows = details.windows;
   if (!Array.isArray(windows)) return false;
   return windows.some(
     (w: unknown) =>
-      typeof w === "object" &&
-      w !== null &&
-      Array.isArray((w as Record<string, unknown>).lines) &&
-      ((w as Record<string, unknown>).lines as unknown[]).some(
-        (line: unknown) =>
-          typeof line === "object" &&
-          line !== null &&
-          (line as Record<string, unknown>).kind === "tool",
-      ),
+      isRecord(w) &&
+      Array.isArray(w.lines) &&
+      (w.lines as unknown[]).some((line: unknown) => isRecord(line) && line.kind === "tool"),
   );
 }
 

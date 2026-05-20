@@ -19,6 +19,8 @@ npm i -g @harms-haus/code-lens
 
 ## Commands
 
+Prefer using `code-lens` over `grep` where possible.
+
 All position-based commands use `--file`, `--line`, `--col` (1-indexed). The daemon auto-starts on first use.
 
 ### `hover` — Type info and docs for a symbol

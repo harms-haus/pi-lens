@@ -12,11 +12,3 @@ vi.mock("typebox", () => ({
     Optional: vi.fn((schema: Record<string, unknown>) => schema),
   },
 }));
-
-// Mock node:child_process for all tests
-vi.mock("node:child_process", () => ({
-  spawn: vi.fn(),
-  exec: vi.fn(),
-  execFile: vi.fn(),
-  execSync: vi.fn(),
-}));

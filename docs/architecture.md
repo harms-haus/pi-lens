@@ -54,7 +54,7 @@ The extension is loaded by pi directly from TypeScript. The entry point is `src/
 
 ## 2. Module Descriptions
 
-pi-lens consists of five modules:
+pi-lens consists of six modules:
 
 ### `index.ts` — Extension Entry Point
 
@@ -88,7 +88,7 @@ The `SubagentChecker` object manages cooldown-gated check scheduling:
 | `checkInFlight` | Getter — whether a check is currently running. |
 | `hasPendingCheck` | Getter — whether a check has been deferred by cooldown logic. |
 
-Imports from: `@harms-haus/code-lens/client` (daemon lifecycle), `config.ts`, `hook-runner.ts`, `types.ts`.
+Imports from: `@harms-haus/code-lens/client` (daemon lifecycle), `config.ts`, `helpers.ts`, `hook-runner.ts`, `types.ts`.
 
 ### `hook-runner.ts` — Daemon Client & File Resolution
 
@@ -102,11 +102,19 @@ The core orchestration module. Responsible for:
 
 2. **File filtering** — `filterFilesByPatterns()` applies `includePatterns`/`excludePatterns` from config using compiled glob regexes (cached for the session).
 
-3. **Daemon communication** — `runChecks()` sends a `fullCheck` JSON-RPC request to the daemon over the Unix socket. Parses the response to extract per-check statuses and formatted issue text.
+3. **Daemon communication** — `runChecks()` sends a `fullCheck` JSON-RPC request to the daemon over the Unix socket. Response parsing is delegated to `parseDaemonResponse()`, which validates the response structure using `isRecord()` type guards and extracts per-check statuses, issue flags, and formatted text.
 
 4. **Result formatting** — Builds the final text to append to the tool result, including a header with file count and duration.
 
-Exports: `resolveFilesFromToolResult()`, `runChecks()`, `filterFilesByPatterns()`, `LensState`, `HookResult`, `HookCheckStatuses`.
+Imports from: `@harms-haus/code-lens/client` (daemon lifecycle), `bash-file-detector.ts`, `helpers.ts`, `types.ts`.
+
+Exports: `resolveFilesFromToolResult()`, `runChecks()`, `filterFilesByPatterns()`, `formatCleanMessage()`, `LensState`, `HookResult`, `HookCheckStatuses`.
+
+### `helpers.ts` — Shared Type Guards
+
+Runtime type guard utilities used across modules.
+
+- **`isRecord(value)`** — Type guard that checks if a value is a non-null, non-array object (`typeof === "object" && value !== null && !Array.isArray(value)`). Used by `index.ts` and `hook-runner.ts` to safely traverse untyped API payloads without `as` casts.
 
 ### `types.ts` — Core Types
 

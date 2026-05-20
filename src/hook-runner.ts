@@ -14,6 +14,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import type { LensConfig, CheckStatus } from "./types.js";
 import { detectFilesFromBashCommand } from "./bash-file-detector.js";
+import { isRecord } from "./helpers.js";
 import { sendRequest, getSocketPath } from "@harms-haus/code-lens/client";
 
 /** Shared state passed from the extension entry point */
@@ -115,6 +116,58 @@ export function formatCleanMessage(fileCount: number, durationMs: number): strin
 
 // ── Daemon Communication ────────────────────────────────────────────────────
 
+/** Parsed result from the daemon's fullCheck response */
+interface ParsedDaemonResponse {
+  statuses: HookCheckStatuses;
+  hasIssues: boolean;
+  sectionsText: string;
+}
+
+/** Valid CheckStatus values */
+const VALID_CHECK_STATUSES = new Set(["pending", "running", "clean", "issues", "error", "skipped"]);
+
+/**
+ * Parse and validate the daemon's fullCheck response.
+ * Uses type guards instead of unsafe `as` casts.
+ */
+function parseDaemonResponse(
+  response: unknown,
+  initialStatuses: HookCheckStatuses,
+): ParsedDaemonResponse {
+  const statuses = { ...initialStatuses };
+
+  if (!isRecord(response)) {
+    return { statuses, hasIssues: false, sectionsText: "" };
+  }
+
+  const details = response.details;
+  if (isRecord(details)) {
+    const daemonStatuses = details.statuses;
+    if (isRecord(daemonStatuses)) {
+      for (const key of ["prettier", "linters", "lsp", "tsc"] as const) {
+        const value = daemonStatuses[key];
+        if (typeof value === "string" && VALID_CHECK_STATUSES.has(value)) {
+          statuses[key] = value as CheckStatus;
+        }
+      }
+    }
+  }
+
+  const hasIssues =
+    isRecord(response) && isRecord(response.details) && response.details.hasIssues === true;
+
+  const content = response.content;
+  let sectionsText = "";
+  if (Array.isArray(content) && content.length > 0 && isRecord(content[0])) {
+    const text = content[0].text;
+    if (typeof text === "string") {
+      sectionsText = text;
+    }
+  }
+
+  return { statuses, hasIssues, sectionsText };
+}
+
 let requestIdCounter = 0;
 
 /**
@@ -175,29 +228,19 @@ export async function runChecks(
       return { text: "", statuses, durationMs };
     }
 
-    // Extract statuses from daemon response
-    const daemonStatuses = result.details.statuses as Record<string, CheckStatus> | undefined;
-    if (daemonStatuses) {
-      statuses.prettier = daemonStatuses.prettier;
-      statuses.linters = daemonStatuses.linters;
-      statuses.lsp = daemonStatuses.lsp;
-      statuses.tsc = daemonStatuses.tsc;
-    }
+    const parsed = parseDaemonResponse(result, statuses);
 
-    const hasIssues = result.details.hasIssues as boolean;
-    const sectionsText = result.content[0]?.text ?? "";
     const durationMs = Date.now() - startTime;
 
-    // Build final text
     const text = buildResultText(
       filteredFiles.length,
       durationMs,
-      hasIssues,
+      parsed.hasIssues,
       config.alwaysReport,
-      sectionsText,
+      parsed.sectionsText,
     );
 
-    return { text, statuses, durationMs };
+    return { text, statuses: parsed.statuses, durationMs };
   } catch {
     const durationMs = Date.now() - startTime;
     return { text: "", statuses, durationMs };

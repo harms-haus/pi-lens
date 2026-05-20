@@ -2,12 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock node:fs
 vi.mock("node:fs", () => ({
-  default: {
-    readFileSync: vi.fn(),
-    existsSync: vi.fn(),
-  },
   readFileSync: vi.fn(),
-  existsSync: vi.fn(),
 }));
 
 import { loadConfig, DEFAULT_CONFIG } from "../config.js";

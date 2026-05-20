@@ -114,8 +114,7 @@ const PATTERNS: PatternDef[] = [
 
   // perl -i ... file  →  file modified in-place
   {
-    regex:
-      /\bperl\s+(?:[^;|&>]*?)?-i(?:\.[^\s;|&>]*)?(?:\s+[^;|&>]*?)?\s+['"]?([^\s;|&>'"]+)['"]?/g,
+    regex: /\bperl\s+(?:\S+\s+)*?-i(?:\.\S*)?(?:\s+\S+)*\s+['"]?([^\s;|&>'"]+)['"]?\s*$/g,
     writtenGroups: [1],
     readGroups: [],
   },

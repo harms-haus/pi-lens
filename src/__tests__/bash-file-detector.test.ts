@@ -90,22 +90,13 @@ describe("detectFilesFromBashCommand", () => {
   // ── perl -i ───────────────────────────────────────────────────────
   describe("perl -i", () => {
     it("detects perl -i file", () => {
-      // perl -i regex has complexity with -pe flag parsing
-      // This is a best-effort detection
       const result = detectFilesFromBashCommand("perl -i -pe 's/old/new/g' file.pl", CWD);
-      // The regex may pick up wrong captures due to complex arg parsing
-      if (result.written.length > 0) {
-        // At least something was detected as written
-        expect(result.written.length).toBeGreaterThan(0);
-      }
+      expect(result.written).toContain(path.resolve(CWD, "file.pl"));
     });
 
     it("detects perl -i.bak file", () => {
       const result = detectFilesFromBashCommand("perl -i.bak -pe 's/old/new/g' file.pl", CWD);
-      // Best-effort - regex may not capture correctly
-      if (result.written.length > 0) {
-        expect(result.written.length).toBeGreaterThan(0);
-      }
+      expect(result.written).toContain(path.resolve(CWD, "file.pl"));
     });
   });
 
@@ -287,6 +278,37 @@ describe("detectFilesFromBashCommand", () => {
       const destPath = path.resolve(CWD, "dest.txt");
       // dest is written, should NOT appear in read
       expect(result.read).not.toContain(destPath);
+    });
+  });
+
+  // ── Redirect fallback ─────────────────────────────────────────────
+  describe("redirect fallback", () => {
+    it("detects generic redirect for unknown commands", () => {
+      const result = detectFilesFromBashCommand("some_unknown_tool > output.txt", CWD);
+      expect(result.written).toContain(path.resolve(CWD, "output.txt"));
+    });
+
+    it("detects append redirect for unknown commands", () => {
+      const result = detectFilesFromBashCommand("some_unknown_tool >> output.txt", CWD);
+      expect(result.written).toContain(path.resolve(CWD, "output.txt"));
+    });
+  });
+
+  // ── Edge cases — filename characters ──────────────────────────────
+  describe("edge cases — filename characters", () => {
+    it("handles filenames with dots", () => {
+      const result = detectFilesFromBashCommand("echo hello > file.test.ts", CWD);
+      expect(result.written).toContain(path.resolve(CWD, "file.test.ts"));
+    });
+
+    it("handles filenames with hyphens", () => {
+      const result = detectFilesFromBashCommand("echo hello > my-file.txt", CWD);
+      expect(result.written).toContain(path.resolve(CWD, "my-file.txt"));
+    });
+
+    it("handles filenames with underscores", () => {
+      const result = detectFilesFromBashCommand("echo hello > my_file.txt", CWD);
+      expect(result.written).toContain(path.resolve(CWD, "my_file.txt"));
     });
   });
 });

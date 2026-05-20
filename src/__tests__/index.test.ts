@@ -223,6 +223,53 @@ describe("session_start", () => {
     // Should not throw
     await handler({ type: "session_start", reason: "startup" }, ctx);
   });
+
+  it("does not call setStatus when hasUI is false", async () => {
+    const { pi, handlers } = createMockPi();
+    const ctx = createMockContext({ hasUI: false } as Partial<ExtensionContext>);
+    extension(pi);
+    const handler = handlers.get("session_start")!;
+    await handler({ type: "session_start", reason: "startup" }, ctx);
+    expect(ctx.ui.setStatus).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates identical status payloads", async () => {
+    const { pi, handlers } = createMockPi();
+    const ctx = createMockContext();
+    extension(pi);
+
+    const startHandler = handlers.get("session_start")!;
+    await startHandler({ type: "session_start", reason: "startup" }, ctx);
+
+    // Count calls after initial session_start (which already calls publishStatus once)
+    const initialCallCount = vi.mocked(ctx.ui.setStatus).mock.calls.length;
+
+    // publishStatus is private, so we trigger it indirectly via tool_result with same statuses
+    vi.mocked(resolveFilesFromToolResult).mockReturnValue(["/home/user/project/src/foo.ts"]);
+    vi.mocked(runChecks).mockResolvedValue({
+      text: "clean",
+      statuses: { prettier: "pending", linters: "pending", lsp: "pending", tsc: "pending" },
+      durationMs: 10,
+    });
+
+    const toolResultHandler = handlers.get("tool_result")!;
+
+    // First call — same status as initial (pending,pending,pending,pending) → should be deduped
+    await toolResultHandler(
+      {
+        type: "tool_result",
+        toolName: "write",
+        toolCallId: "call-dedup-1",
+        input: { path: "/home/user/project/src/foo.ts" },
+        content: [{ type: "text", text: "File written" }],
+        isError: false,
+      },
+      ctx,
+    );
+
+    // No additional setStatus calls because payload is identical to initial
+    expect(vi.mocked(ctx.ui.setStatus).mock.calls.length).toBe(initialCallCount);
+  });
 });
 
 // ── session_shutdown ────────────────────────────────────────────────
@@ -664,6 +711,38 @@ describe("tool_execution_update filtering", () => {
     expect(pi.exec).not.toHaveBeenCalled();
     expect(runChecks).not.toHaveBeenCalled();
   });
+
+  it("ignores delegate_to_subagents when windows is not an array", () => {
+    const { pi, handlers } = createMockPi();
+    extension(pi);
+
+    const handler = handlers.get("tool_execution_update")!;
+    handler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-non-array-windows",
+      partialResult: { details: { windows: "not-an-array" } },
+    });
+
+    expect(pi.exec).not.toHaveBeenCalled();
+    expect(runChecks).not.toHaveBeenCalled();
+  });
+
+  it("ignores delegate_to_subagents when window lines is not an array", () => {
+    const { pi, handlers } = createMockPi();
+    extension(pi);
+
+    const handler = handlers.get("tool_execution_update")!;
+    handler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-non-array-lines",
+      partialResult: { details: { windows: [{ lines: "not-an-array" }] } },
+    });
+
+    expect(pi.exec).not.toHaveBeenCalled();
+    expect(runChecks).not.toHaveBeenCalled();
+  });
 });
 
 // ── tool_execution_update triggers check ─────────────────────────────
@@ -757,6 +836,249 @@ describe("tool_execution_update triggers check", () => {
 
     expect(handlers.get("tool_execution_end")).toBeDefined();
     expect(runChecks).not.toHaveBeenCalled();
+  });
+});
+
+// ── Git error paths ────────────────────────────────────────────────────
+
+describe("git error paths in subagent checker", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function setupSession() {
+    const { pi, handlers } = createMockPi();
+    const ctx = createMockContext();
+    extension(pi);
+
+    const startHandler = handlers.get("session_start")!;
+    await startHandler({ type: "session_start", reason: "startup" }, ctx);
+
+    return { pi, handlers, ctx };
+  }
+
+  it("handles git returning non-zero exit code", async () => {
+    const { pi, handlers } = await setupSession();
+    vi.mocked(pi.exec).mockResolvedValue({
+      code: 128,
+      stdout: "",
+      stderr: "fatal: not a git repo",
+      killed: false,
+    });
+    vi.mocked(runChecks).mockResolvedValue({
+      text: "",
+      statuses: { prettier: "skipped", linters: "skipped", lsp: "skipped", tsc: "skipped" },
+      durationMs: 10,
+    });
+
+    const handler = handlers.get("tool_execution_update")!;
+    handler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-git-err",
+      partialResult: createToolActivityPartialResult(),
+    });
+
+    await vi.runAllTimersAsync();
+
+    expect(pi.exec).toHaveBeenCalled();
+    // runChecks should NOT be called because no files were resolved
+    expect(runChecks).not.toHaveBeenCalled();
+  });
+
+  it("handles git returning empty stdout", async () => {
+    const { pi, handlers } = await setupSession();
+    vi.mocked(pi.exec).mockResolvedValue({
+      code: 0,
+      stdout: "",
+      stderr: "",
+      killed: false,
+    });
+
+    const handler = handlers.get("tool_execution_update")!;
+    handler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-git-empty",
+      partialResult: createToolActivityPartialResult(),
+    });
+
+    await vi.runAllTimersAsync();
+
+    expect(pi.exec).toHaveBeenCalled();
+    expect(runChecks).not.toHaveBeenCalled();
+  });
+
+  it("handles git command throwing", async () => {
+    const { pi, handlers } = await setupSession();
+    vi.mocked(pi.exec).mockRejectedValue(new Error("git not found"));
+
+    const handler = handlers.get("tool_execution_update")!;
+    handler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-git-throw",
+      partialResult: createToolActivityPartialResult(),
+    });
+
+    await vi.runAllTimersAsync();
+
+    expect(pi.exec).toHaveBeenCalled();
+    expect(runChecks).not.toHaveBeenCalled();
+  });
+});
+
+// ── Subagent checker internal paths ────────────────────────────────────
+
+describe("subagent checker internal paths", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function setupSession() {
+    const { pi, handlers } = createMockPi();
+    const ctx = createMockContext();
+    extension(pi);
+
+    const startHandler = handlers.get("session_start")!;
+    await startHandler({ type: "session_start", reason: "startup" }, ctx);
+
+    return { pi, handlers, ctx };
+  }
+
+  it("handles runChecks throwing in subagent checker", async () => {
+    const { pi, handlers } = await setupSession();
+    vi.mocked(pi.exec).mockResolvedValue({
+      code: 0,
+      stdout: "src/foo.ts",
+      stderr: "",
+      killed: false,
+    });
+    vi.mocked(runChecks).mockRejectedValue(new Error("check exploded"));
+
+    const handler = handlers.get("tool_execution_update")!;
+    handler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-subagent-throw",
+      partialResult: createToolActivityPartialResult(),
+    });
+
+    // Should not throw
+    await vi.runAllTimersAsync();
+
+    expect(runChecks).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts check when shutdown happens mid-flight", async () => {
+    const { pi, handlers, ctx } = await setupSession();
+
+    // Make runChecks hang until we advance timers
+    let resolveChecks!: () => void;
+    const checksPromise = new Promise<void>((resolve) => {
+      resolveChecks = resolve;
+    });
+    vi.mocked(pi.exec).mockResolvedValue({
+      code: 0,
+      stdout: "src/foo.ts",
+      stderr: "",
+      killed: false,
+    });
+    vi.mocked(runChecks).mockImplementation(() => {
+      return checksPromise.then(() => ({
+        text: "clean",
+        statuses: { prettier: "clean", linters: "clean", lsp: "clean", tsc: "clean" },
+        durationMs: 10,
+      }));
+    });
+
+    const updateHandler = handlers.get("tool_execution_update")!;
+    updateHandler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-shutdown-mid",
+      partialResult: createToolActivityPartialResult(),
+    });
+
+    // Let git resolve but keep runChecks pending
+    await vi.advanceTimersByTimeAsync(100);
+
+    // Now shutdown while check is still in-flight
+    const shutdownHandler = handlers.get("session_shutdown")!;
+    await shutdownHandler({ type: "session_shutdown", reason: "quit" }, ctx);
+
+    // Now resolve runChecks
+    resolveChecks();
+    await vi.runAllTimersAsync();
+
+    // The status update after shutdown should be suppressed
+    // (publishStatus checks currentCtx?.hasUI which is undefined after shutdown)
+    // No additional setStatus with check results should happen
+    const statusCalls = vi
+      .mocked(ctx.ui.setStatus)
+      .mock.calls.filter((c) => c[0] === "pi-lens" && c[1] !== undefined);
+    // Only the initial session_start status was set
+    expect(statusCalls.length).toBe(1);
+  });
+
+  it("processes pending check after files.length === 0 early return", async () => {
+    const { pi, handlers } = await setupSession();
+
+    // First call: git returns no files → early return
+    vi.mocked(pi.exec).mockResolvedValueOnce({
+      code: 0,
+      stdout: "",
+      stderr: "",
+      killed: false,
+    });
+
+    // But we need a second git call for the pending check to resolve files
+    vi.mocked(pi.exec).mockResolvedValueOnce({
+      code: 0,
+      stdout: "src/foo.ts",
+      stderr: "",
+      killed: false,
+    });
+
+    vi.mocked(runChecks).mockResolvedValue({
+      text: "clean",
+      statuses: { prettier: "clean", linters: "clean", lsp: "clean", tsc: "clean" },
+      durationMs: 10,
+    });
+
+    const handler = handlers.get("tool_execution_update")!;
+
+    // First trigger — immediate check, no files
+    handler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-empty-1",
+      partialResult: createToolActivityPartialResult(),
+    });
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(runChecks).not.toHaveBeenCalled();
+
+    // Rapid second trigger during cooldown — marks pending
+    handler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-empty-2",
+      partialResult: createToolActivityPartialResult(),
+    });
+
+    // Advance past cooldown — pending check should fire with files
+    await vi.advanceTimersByTimeAsync(6000);
+
+    expect(runChecks).toHaveBeenCalledTimes(1);
   });
 });
 

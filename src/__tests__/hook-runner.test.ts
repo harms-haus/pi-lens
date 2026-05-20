@@ -3,12 +3,7 @@ import * as path from "node:path";
 
 // Mock node:fs for resolveFilesFromToolResult (existsSync check)
 vi.mock("node:fs", () => ({
-  default: {
-    existsSync: vi.fn(),
-    readFileSync: vi.fn(),
-  },
   existsSync: vi.fn(),
-  readFileSync: vi.fn(),
 }));
 
 // Mock internal modules
@@ -21,12 +16,33 @@ vi.mock("@harms-haus/code-lens/client", () => ({
   getSocketPath: vi.fn().mockReturnValue("/tmp/code-lens-test.sock"),
 }));
 
-import { resolveFilesFromToolResult, runChecks, formatCleanMessage } from "../hook-runner.js";
+import {
+  resolveFilesFromToolResult,
+  runChecks,
+  formatCleanMessage,
+  filterFilesByPatterns,
+} from "../hook-runner.js";
 import type { LensConfig } from "../types.js";
 import { detectFilesFromBashCommand } from "../bash-file-detector.js";
 import { sendRequest, getSocketPath } from "@harms-haus/code-lens/client";
 
 const CWD = "/home/user/project";
+
+const baseConfig: LensConfig = {
+  prettier: false,
+  linters: false,
+  lsp: false,
+  tsc: false,
+  includePatterns: [],
+  excludePatterns: ["node_modules/**"],
+  lspDelayMs: 0,
+  maxConcurrency: 4,
+  prettierTimeoutMs: 15_000,
+  linterTimeoutMs: 15_000,
+  tscTimeoutMs: 30_000,
+  bashDetection: true,
+  alwaysReport: true,
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -127,27 +143,36 @@ describe("resolveFilesFromToolResult", () => {
     // Should not duplicate even if called with same path
     expect(result).toHaveLength(1);
   });
+
+  it("filters out paths outside cwd (path traversal)", async () => {
+    const { existsSync } = await import("node:fs");
+    vi.mocked(existsSync).mockReturnValue(true);
+    const result = resolveFilesFromToolResult("write", { path: "../../../etc/passwd" }, CWD);
+    expect(result).toEqual([]);
+  });
+
+  it("filters out absolute paths outside cwd", async () => {
+    const { existsSync } = await import("node:fs");
+    vi.mocked(existsSync).mockReturnValue(true);
+    const result = resolveFilesFromToolResult("write", { path: "/etc/passwd" }, CWD);
+    expect(result).toEqual([]);
+  });
+
+  it("skips bash detection when bashDetection is false", async () => {
+    const config = { ...baseConfig, bashDetection: false };
+    const result = resolveFilesFromToolResult(
+      "bash",
+      { command: "sed -i 's/a/b/g' file.txt" },
+      CWD,
+      config,
+    );
+    expect(result).toEqual([]);
+  });
 });
 
 // ── runChecks ───────────────────────────────────────────────────────
 
 describe("runChecks", () => {
-  const baseConfig: LensConfig = {
-    prettier: false,
-    linters: false,
-    lsp: false,
-    tsc: false,
-    includePatterns: [],
-    excludePatterns: ["node_modules/**"],
-    lspDelayMs: 0,
-    maxConcurrency: 4,
-    prettierTimeoutMs: 15_000,
-    linterTimeoutMs: 15_000,
-    tscTimeoutMs: 30_000,
-    bashDetection: true,
-    alwaysReport: true,
-  };
-
   /** Helper to create a mock fullCheck response */
   function mockFullCheckResponse(overrides: {
     statuses?: { prettier?: string; linters?: string; lsp?: string; tsc?: string };
@@ -351,6 +376,76 @@ describe("runChecks", () => {
   });
 });
 
+// ── parseDaemonResponse edge cases (via runChecks) ──────────────────
+
+describe("parseDaemonResponse edge cases (via runChecks)", () => {
+  beforeEach(() => {
+    vi.mocked(sendRequest).mockReset();
+  });
+
+  it("handles response with missing details", async () => {
+    vi.mocked(sendRequest).mockResolvedValue({
+      isError: false,
+      content: [{ type: "text" as const, text: "" }],
+    } as never);
+    const result = await runChecks(["/home/user/project/src/foo.ts"], CWD, baseConfig);
+    expect(result.statuses.prettier).toBe("skipped");
+  });
+
+  it("handles response with non-object details", async () => {
+    vi.mocked(sendRequest).mockResolvedValue({
+      isError: false,
+      content: [{ type: "text" as const, text: "" }],
+      details: "not-an-object" as unknown as Record<string, unknown>,
+    });
+    const result = await runChecks(["/home/user/project/src/foo.ts"], CWD, baseConfig);
+    expect(result.statuses.prettier).toBe("skipped");
+  });
+
+  it("handles response with non-boolean hasIssues", async () => {
+    vi.mocked(sendRequest).mockResolvedValue({
+      isError: false,
+      content: [{ type: "text" as const, text: "issues text" }],
+      details: {
+        statuses: { prettier: "clean", linters: "clean", lsp: "clean", tsc: "clean" },
+        hasIssues: "yes",
+      },
+    });
+    const result = await runChecks(["/home/user/project/src/foo.ts"], CWD, baseConfig);
+    // hasIssues is not boolean true → treated as false
+    expect(result.text).toContain("all clean");
+  });
+
+  it("handles response with invalid status values", async () => {
+    vi.mocked(sendRequest).mockResolvedValue({
+      isError: false,
+      content: [{ type: "text" as const, text: "" }],
+      details: {
+        statuses: { prettier: "invalid-status", linters: 123, lsp: null, tsc: "clean" },
+        hasIssues: false,
+      },
+    });
+    const result = await runChecks(["/home/user/project/src/foo.ts"], CWD, baseConfig);
+    expect(result.statuses.prettier).toBe("skipped");
+    expect(result.statuses.linters).toBe("skipped");
+    expect(result.statuses.lsp).toBe("skipped");
+    expect(result.statuses.tsc).toBe("clean");
+  });
+
+  it("handles response with empty content array", async () => {
+    vi.mocked(sendRequest).mockResolvedValue({
+      isError: false,
+      content: [],
+      details: {
+        statuses: { prettier: "clean", linters: "clean", lsp: "clean", tsc: "clean" },
+        hasIssues: true,
+      },
+    });
+    const result = await runChecks(["/home/user/project/src/foo.ts"], CWD, baseConfig);
+    expect(result.text).toContain("pi-lens");
+  });
+});
+
 // ── formatCleanMessage ──────────────────────────────────────────────
 
 describe("formatCleanMessage", () => {
@@ -362,5 +457,78 @@ describe("formatCleanMessage", () => {
   it("formats with 0 files", () => {
     const msg = formatCleanMessage(0, 0);
     expect(msg).toBe("🔍 pi-lens: 0 file(s) checked — all clean (0ms)");
+  });
+});
+
+// ── filterFilesByPatterns ───────────────────────────────────────────
+
+describe("filterFilesByPatterns", () => {
+  const files = [
+    `${CWD}/src/index.ts`,
+    `${CWD}/src/utils/helpers.ts`,
+    `${CWD}/src/components/App.tsx`,
+    `${CWD}/test/main.test.ts`,
+    `${CWD}/node_modules/lodash/index.js`,
+    `${CWD}/dist/bundle.js`,
+  ];
+
+  it("returns all files when no include or exclude patterns specified", () => {
+    const result = filterFilesByPatterns(files, CWD, [], []);
+    expect(result).toEqual(files);
+  });
+
+  it("filters to files matching include patterns", () => {
+    const result = filterFilesByPatterns(files, CWD, ["src/**"], []);
+    expect(result).toEqual([
+      `${CWD}/src/index.ts`,
+      `${CWD}/src/utils/helpers.ts`,
+      `${CWD}/src/components/App.tsx`,
+    ]);
+  });
+
+  it("excludes files matching exclude patterns", () => {
+    const result = filterFilesByPatterns(files, CWD, [], ["node_modules/**"]);
+    expect(result).toEqual([
+      `${CWD}/src/index.ts`,
+      `${CWD}/src/utils/helpers.ts`,
+      `${CWD}/src/components/App.tsx`,
+      `${CWD}/test/main.test.ts`,
+      `${CWD}/dist/bundle.js`,
+    ]);
+  });
+
+  it("exclude takes precedence over include", () => {
+    const result = filterFilesByPatterns(files, CWD, ["src/**"], ["**/*.tsx"]);
+    // src/App.tsx is included by src/** but excluded by **/*.tsx
+    expect(result).toEqual([`${CWD}/src/index.ts`, `${CWD}/src/utils/helpers.ts`]);
+  });
+
+  it("matches globstar ** patterns across directories", () => {
+    const result = filterFilesByPatterns(files, CWD, ["**/*.ts"], []);
+    expect(result).toEqual([
+      `${CWD}/src/index.ts`,
+      `${CWD}/src/utils/helpers.ts`,
+      `${CWD}/test/main.test.ts`,
+    ]);
+  });
+
+  it("matches * wildcard for single path segment", () => {
+    const result = filterFilesByPatterns(files, CWD, ["src/*.ts"], []);
+    // Only direct children of src/ with .ts extension
+    expect(result).toEqual([`${CWD}/src/index.ts`]);
+  });
+
+  it("handles calling with same patterns twice (cache hit — no error)", () => {
+    const patterns: string[] = ["src/**"];
+    // First call populates cache
+    const result1 = filterFilesByPatterns(files, CWD, patterns, []);
+    // Second call hits cache
+    const result2 = filterFilesByPatterns(files, CWD, patterns, []);
+    expect(result1).toEqual(result2);
+    expect(result2).toEqual([
+      `${CWD}/src/index.ts`,
+      `${CWD}/src/utils/helpers.ts`,
+      `${CWD}/src/components/App.tsx`,
+    ]);
   });
 });
