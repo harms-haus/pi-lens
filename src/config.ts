@@ -5,9 +5,11 @@
  * Handles missing files, malformed JSON, and unknown keys gracefully.
  */
 
+import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import type { LensConfig } from "./types.js";
+import { isRecord } from "./helpers.js";
 
 /** Default configuration values */
 export const DEFAULT_CONFIG: LensConfig = {
@@ -121,4 +123,45 @@ export function loadConfig(cwd: string): LensConfig {
   }
 
   return mergeConfig(parsed as Record<string, unknown>);
+}
+
+/**
+ * Load the `piLensRenderer` boolean from `~/.pi/agent/settings.json`.
+ *
+ * - Returns `true` only if the field exists and is a boolean `true`.
+ * - Returns `false` on any error: file not found, malformed JSON, missing
+ *   field, wrong type, etc.
+ * - Non-ENOENT errors are warned to stderr; ENOENT is silently ignored.
+ */
+export function loadRendererSetting(): boolean {
+  const settingsPath = path.join(os.homedir(), ".pi", "agent", "settings.json");
+
+  let content: string;
+  try {
+    content = fs.readFileSync(settingsPath, "utf-8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.warn(`pi-lens: failed to read settings: ${String(err)}`);
+    }
+    return false;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch (err) {
+    console.warn(`pi-lens: failed to parse settings.json: ${String(err)}`);
+    return false;
+  }
+
+  if (!isRecord(parsed)) {
+    return false;
+  }
+
+  const renderer = parsed["piLensRenderer"];
+  if (typeof renderer === "boolean") {
+    return renderer;
+  }
+
+  return false;
 }

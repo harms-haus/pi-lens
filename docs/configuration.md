@@ -1,14 +1,49 @@
 # Configuration Reference
 
-Complete guide to configuring pi-lens via `.pi-lens.json`.
+Complete guide to configuring pi-lens via `.pi-lens.json` and user-level settings.
+
+## Global Settings
+
+pi-lens supports one user-level setting stored in `~/.pi/agent/settings.json`. This applies across **all projects** and is separate from the per-project `.pi-lens.json` configuration.
+
+### `piLensRenderer`
+
+| Field | Value |
+|-------|-------|
+| **Type** | `boolean` |
+| **Default** | `false` |
+| **Location** | `~/.pi/agent/settings.json` |
+| **Scope** | User-level (all projects) |
+| **Description** | Enables a rich TUI diagnostic panel that renders after each write/edit/bash tool call that triggers diagnostic checks. When disabled, only plain-text diagnostic output is appended to tool results. |
+
+```json
+// ~/.pi/agent/settings.json
+{
+  "piLensRenderer": true
+}
+```
+
+#### When `true`
+
+After each tool call that triggers checks (write, edit, or bash with file-writing commands), pi-lens displays a color-coded diagnostic panel in the TUI via `registerMessageRenderer`. The panel includes:
+
+- **Header** — file count, overall status (all clean / issues found), and check duration in milliseconds.
+- **Per-check status lines** — one row each for prettier, linters, LSP, and tsc with status icons:
+  - ✅ `clean` (success) — no issues detected
+  - ⚠ `issues` (warning) — problems found
+  - ✗ `error` (error) — check failed to run
+  - ⊘ `skipped` (dim) — check disabled or not applicable
+- **Expandable detail text** — full diagnostic output shown when the panel is expanded.
+
+#### When `false` (default)
+
+Diagnostic results are appended as plain text to tool output — the existing pi-lens behavior.
+
+---
 
 ## Daemon Architecture
 
-pi-lens delegates check execution to the **@harms-haus/code-lens** daemon. The daemon must be installed in your project:
-
-```bash
-npm install @harms-haus/code-lens
-```
+pi-lens delegates check execution to the **@harms-haus/code-lens** daemon. The `@harms-haus/code-lens` package is a production dependency of pi-lens and is installed automatically — no separate install is needed.
 
 When checks run, pi-lens sends a `fullCheck` JSON-RPC request to the daemon over a Unix socket. The request includes the list of changed files and a subset of your configuration (check flags, timing, and timeouts) as `params.config`. The daemon owns the full check lifecycle — it starts and manages LSP servers on demand, runs prettier/linters/tsc, and returns results.
 

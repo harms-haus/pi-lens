@@ -24,6 +24,7 @@ pi-lens is a thin client extension for the pi coding agent. It detects files cha
 - Monitoring subagent activity during `delegate_to_subagents` and checking git-changed files
 - Starting/stopping the daemon
 - Formatting results for the agent
+- Rendering diagnostic results in the TUI via a custom message renderer (`registerMessageRenderer`)
 
 **@harms-haus/code-lens** (the daemon) is responsible for:
 - Executing all checks (prettier, linters, LSP diagnostics, tsc)
@@ -37,6 +38,7 @@ pi-lens exposes three integration points:
 | Event Hook | `tool_result` | Resolves affected files from write/edit/bash calls and sends them to the daemon for a full check |
 | Event Hook | `tool_execution_update` | Monitors `delegate_to_subagents` for tool activity and triggers checks on git-changed files with a 5-second cooldown |
 | Event Hook | `tool_execution_end` | Forces a final check when `delegate_to_subagents` completes, bypassing cooldown |
+| Message Renderer | `pi-lens-diagnostics` | Custom renderer registered via `pi.registerMessageRenderer()` that displays check results with colour-coded status icons in the TUI |
 
 The `tool_result` hook operates on individual tool calls (synchronous, blocking). The subagent hooks (`tool_execution_update` / `tool_execution_end`) operate on the streaming progress of the `delegate_to_subagents` tool — they are fire-and-forget and never block the agent.
 
@@ -54,24 +56,29 @@ The extension is loaded by pi directly from TypeScript. The entry point is `src/
 
 ## 2. Module Descriptions
 
-pi-lens consists of six modules:
+pi-lens consists of seven modules:
 
 ### `index.ts` — Extension Entry Point
 
 Registers five hooks and manages the daemon lifecycle:
 
-- **`session_start`** — Loads config via `loadConfig()`, calls `ensureDaemon()` to start or connect to the daemon, publishes initial status, resets the subagent checker.
-- **`session_shutdown`** — Calls `stopDaemon()` to shut down the daemon, clears status bar, resets state, clears the subagent checker.
-- **`tool_result`** — Filters to `write`/`edit`/`bash` tool calls only. Resolves affected files, sends them to the daemon via `runChecks()`, and appends formatted results to the tool result content.
-- **`tool_execution_update`** — Monitors `delegate_to_subagents` for tool activity in partial results. When activity is detected, triggers a code-lens check on git-changed files with a 5-second cooldown.
+- **`session_start`** — Loads config via `loadConfig()`, reads the renderer toggle via `loadRendererSetting()` into the `rendererEnabled` flag, calls `ensureDaemon()` to start or connect to the daemon, publishes initial status, resets the subagent checker.
+- **`session_shutdown`** — Calls `stopDaemon()` to shut down the daemon, clears status bar, resets state (including `rendererEnabled = false`), clears the subagent checker.
+- **`tool_result`** — Filters to `write`/`edit`/`bash` tool calls only. Resolves affected files, sends them to the daemon via `runChecks()`, publishes status, sends a structured diagnostic message via `sendDiagnosticMessage()` if `rendererEnabled` is true, and appends formatted results to the tool result content.
+- **`tool_execution_update`** — Monitors `delegate_to_subagents` for tool activity in partial results. When activity is detected, triggers a code-lens check on git-changed files with a 5-second cooldown. Also sends diagnostic messages if `rendererEnabled` is true.
 - **`tool_execution_end`** — Forces a final check when `delegate_to_subagents` completes, bypassing cooldown.
 
-Contains four module-scope helper functions:
+At factory level (before any session), registers the message renderer:
+
+- **`pi.registerMessageRenderer("pi-lens-diagnostics", renderLensDiagnostics)`** — Registers the custom TUI renderer from `renderer.ts`. This happens once when the extension function is called, not per-session.
+
+Contains five module-scope helpers:
 
 - **`buildStatusPayload(checkStatuses?)`** — Builds the `LensStatusPayload` object for the status bar. Maps per-check statuses to a unified payload with `pending` defaults for missing values.
 - **`hasToolActivity(partialResult)`** — Inspects `partialResult.details.windows[].lines[].kind` looking for `"tool"` entries. Returns `true` if any tool activity is detected in the streaming partial result. Uses defensive null checks throughout.
 - **`resolveChangedFilesFromGit(pi, cwd)`** — Runs `git diff --name-only HEAD` via `pi.exec` to discover files changed since the last commit. Deduplicates results and filters to files that exist on disk.
 - **`createSubagentChecker(pi, state, publishStatus)`** — Factory function that encapsulates all subagent monitoring state (cooldown timing, in-flight tracking, pending flags, shutdown signal). Returns a `SubagentChecker` interface.
+- **`sendDiagnosticMessage(pi, ctx, result, fileCount)`** — Sends a structured diagnostic message via `pi.sendMessage()` with `customType: "pi-lens-diagnostics"` and a `LensDiagnosticDetails` payload. Called from both the `tool_result` handler and the subagent checker's `runChecksAndPublish()`. Wrapped in try/catch so it never fails the original tool result.
 
 ### SubagentChecker Interface
 
@@ -88,7 +95,38 @@ The `SubagentChecker` object manages cooldown-gated check scheduling:
 | `checkInFlight` | Getter — whether a check is currently running. |
 | `hasPendingCheck` | Getter — whether a check has been deferred by cooldown logic. |
 
-Imports from: `@harms-haus/code-lens/client` (daemon lifecycle), `config.ts`, `helpers.ts`, `hook-runner.ts`, `types.ts`.
+Imports from: `@harms-haus/code-lens/client` (daemon lifecycle), `config.ts`, `helpers.ts`, `hook-runner.ts`, `renderer.ts`, `types.ts`.
+
+### `renderer.ts` — TUI Diagnostic Renderer
+
+Provides the custom message renderer registered via `pi.registerMessageRenderer("pi-lens-diagnostics", renderLensDiagnostics)`. Displays diagnostic check results with colour-coded status icons in the pi TUI.
+
+Exports:
+
+- **`LensDiagnosticDetails`** (interface) — Structured diagnostic payload: per-check statuses (`prettier`, `linters`, `lsp`, `tsc`), `hasIssues` flag, `fileCount`, `durationMs`, and optional `sectionsText`.
+- **`renderLensDiagnostics(message, options, theme)`** — The renderer function. Accepts a message object with optional `details` (a `LensDiagnosticDetails`) and `content`, plus an `{ expanded }` options flag and a `Theme` object providing `fg()`/`bg()` colour methods. Returns an object with a `render(width)` method (the `DiagnosticPanel` contract).
+
+Internal components:
+
+- **`DiagnosticPanel`** — Minimal inline class satisfying the `{ render(width: number): string[] }` TUI contract. Defined inline to avoid importing `@earendil-works/pi-tui` at build time (that package is only available at runtime through pi-coding-agent).
+- **`stripAnsi(text)`** — Security helper that removes ANSI escape sequences from text before rendering. Applied to `sectionsText` when the panel is expanded.
+- **`renderStatusIcon(status, theme)`** — Maps a check status to a themed icon string.
+- **`renderStatusLabel(status, theme)`** — Maps a check status to a themed label string.
+
+Handles six status types, each with a dedicated theme colour and icon:
+
+| Status | Icon | Theme Key | Label |
+|--------|------|-----------|-------|
+| `clean` | ✅ | `success` | clean |
+| `issues` | ⚠ | `warning` | issues |
+| `error` | ✗ | `error` | error |
+| `skipped` | ⊘ | `dim` | skipped |
+| `running` | ● | `muted` | running |
+| `pending` | ● | `muted` | pending |
+
+**Never throws** — the entire `renderLensDiagnostics` body is wrapped in a try/catch that returns a safe fallback panel on any error.
+
+Imports from: (none — self-contained).
 
 ### `hook-runner.ts` — Daemon Client & File Resolution
 
@@ -131,6 +169,8 @@ Reads `.pi-lens.json` from the project root and merges with defaults:
 - Returns `DEFAULT_CONFIG` if the file is missing, unreadable, or contains malformed JSON
 - Type-safe merging: only known keys with correct types are applied; unknown keys and wrong-typed values are silently ignored
 - Warnings are printed to stderr for parse errors
+
+Also exports **`loadRendererSetting()`** — reads the `piLensRenderer` boolean from `~/.pi/agent/settings.json`. Returns `true` only if the field exists and is a boolean `true`; returns `false` on any error (file not found, malformed JSON, missing field, wrong type). Non-`ENOENT` errors are warned to stderr; `ENOENT` is silently ignored. This setting controls whether pi-lens sends structured diagnostic messages to the TUI via `pi.sendMessage()`.
 
 ### `bash-file-detector.ts` — Bash Command Analysis
 
@@ -192,7 +232,13 @@ Agent calls write/edit/bash tool
                ├─ Build result text (header + issue sections)
                └─ Return HookResult { text, statuses, durationMs }
 
-  index.ts appends result.text to tool result content
+  index.ts:
+    ├─ publishStatus(statuses) → ui.setStatus("pi-lens", payload)
+    ├─ rendererEnabled?
+    │     └─ sendDiagnosticMessage(pi, ctx, result, fileCount)
+    │           └─ pi.sendMessage({ customType: "pi-lens-diagnostics", ... })
+    │                 └─ TUI renders via registered renderLensDiagnostics()
+    └─ Append result.text to tool result content (plain text, for LLM consumption)
 ```
 
 ### Subagent Check Flow (tool_execution_update / tool_execution_end)
@@ -223,6 +269,10 @@ Agent runs delegate_to_subagents tool
                ├─ runChecks(files, cwd, config)
                │     └─ Daemon fullCheck request (same as tool_result flow)
                ├─ publishStatus(result.statuses)
+               ├─ rendererEnabled AND result.text?
+               │     └─ sendDiagnosticMessage(pi, ctx, result, files.length)
+               │           └─ pi.sendMessage({ customType: "pi-lens-diagnostics", ... })
+               │                 └─ TUI renders via registered renderLensDiagnostics()
                └─ If hasPendingCheck: scheduleCooldownCheck()
 
   ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
@@ -247,6 +297,7 @@ session_start
   ├─ state.cwd = ctx.cwd
   ├─ currentCtx = ctx
   ├─ loadConfig(cwd)              → state.config
+  ├─ loadRendererSetting()        → rendererEnabled
   ├─ ensureDaemon(cwd)            → starts daemon if not running
   ├─ ctx.ui.notify('pi-lens: ready', 'info')
   ├─ publishStatus()              → ui.setStatus("pi-lens", payload)
@@ -257,7 +308,9 @@ tool_result
   ├─ runChecks(files, cwd, config)
   │     └─ Returns HookResult { text, statuses, durationMs }
   ├─ publishStatus(statuses)      → ui.setStatus("pi-lens", payload)
-  └─ Return modified tool result with appended content
+  ├─ rendererEnabled AND result.text?
+  │     └─ sendDiagnosticMessage() → pi.sendMessage() → TUI renderLensDiagnostics()
+  └─ Return modified tool result with appended content (plain text for LLM)
 
 tool_execution_update (subagent streaming)
   ├─ hasToolActivity(partialResult)?
@@ -271,6 +324,7 @@ session_shutdown
   ├─ stopDaemon(cwd)              → SIGTERM daemon, clean socket/metadata
   ├─ checker.clear()              → cancel timers, set shutdown flag
   ├─ ui.setStatus("pi-lens", undefined)
+  ├─ rendererEnabled = false
   └─ Reset state to defaults
 ```
 
@@ -293,12 +347,15 @@ All check execution state (linter detection, tool availability, LSP server insta
 
 ### Closure State in index.ts
 
-Beyond `LensState`, `index.ts` maintains two module-level variables:
+Beyond `LensState`, `index.ts` maintains three module-level variables:
 
 ```typescript
 let currentCtx: ExtensionContext | undefined;   // Current session context
 let lastStatus: string | undefined;             // Last published status JSON (for dedup)
+let rendererEnabled: boolean = false;            // Whether TUI diagnostic messages are enabled
 ```
+
+**`rendererEnabled`** is set from `loadRendererSetting()` during `session_start` (reads the `piLensRenderer` boolean from `~/.pi/agent/settings.json`). It is reset to `false` during `session_shutdown`. When `true`, both the `tool_result` handler and the subagent checker's `runChecksAndPublish()` call `sendDiagnosticMessage()` after each check to send a structured `LensDiagnosticDetails` payload to the TUI. When `false`, diagnostic messages are not sent and only the plain-text appendage to the tool result is produced (for LLM consumption).
 
 Status deduplication is performed by comparing JSON strings — if the status payload hasn't changed, `ui.setStatus` is not called again.
 
@@ -387,9 +444,9 @@ Requests are sent as single-line JSON (NDJSON) over the Unix socket:
       "tsc": true,
       "lspDelayMs": 1000,
       "maxConcurrency": 4,
-      "prettierTimeoutMs": 30000,
-      "linterTimeoutMs": 30000,
-      "tscTimeoutMs": 60000
+      "prettierTimeoutMs": 15000,
+      "linterTimeoutMs": 15000,
+      "tscTimeoutMs": 30000
     }
   },
   "id": 1

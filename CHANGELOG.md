@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **TUI diagnostic renderer** — Optional rich diagnostic panel that displays color-coded status indicators after each write/edit/bash that triggers checks
+  - Enable via `"piLensRenderer": true` in `~/.pi/agent/settings.json` (default: `false`)
+  - Shows header with file count and check duration, themed green (clean) or yellow (issues)
+  - Per-check status lines: ✅ clean, ⚠ issues, ✗ error, ⊘ skipped
+  - Expandable detail view (Ctrl+E) showing full diagnostic output
+  - ANSI escape sequences are stripped from diagnostic output for security
+  - Existing plain-text output is preserved for the AI agent
+- `loadRendererSetting()` in config.ts — reads the `piLensRenderer` boolean from `~/.pi/agent/settings.json`
+- `renderLensDiagnostics()` in renderer.ts — TUI message renderer with theme-aware color output
+- `LensDiagnosticDetails` interface — structured diagnostic data for the renderer
+- `sendDiagnosticMessage()` helper — sends structured diagnostic messages via `pi.sendMessage`
+- 22 new tests (7 for config, 9 for renderer, 6 for integration)
+
 ## [2.0.0] — 2026-05-19
 
 ### Added

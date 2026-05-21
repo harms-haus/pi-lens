@@ -11,7 +11,7 @@ pi-lens is a [pi](https://github.com/earendil-works/pi-coding-agent) extension t
 - **Daemon lifecycle** — starts/stops the code-lens daemon per session
 - **Status bar** — publishes per-check status (prettier, linters, LSP, tsc) to the pi UI
 
-The codebase is ~820 lines of TypeScript (ESM) across 5 source files with zero build step — pi loads `.ts` files directly at runtime.
+The codebase is ~1,310 lines of TypeScript (ESM) across 7 source files with zero build step — pi loads `.ts` files directly at runtime.
 
 We welcome contributions in all forms: bug reports, hook behavior improvements, documentation, and test coverage enhancements.
 
@@ -97,15 +97,19 @@ pi-lens/
 │   ├── config.ts                # Configuration loading: reads .pi-lens.json, merges with defaults, validates types
 │   ├── hook-runner.ts           # Main orchestrator: resolves files from tool results, sends fullCheck to daemon
 │   ├── bash-file-detector.ts    # Bash command analyzer: detects file-writing patterns in command strings
+│   ├── renderer.ts              # TUI diagnostic renderer: formats check results with colour for the pi terminal UI
+│   ├── helpers.ts               # Shared runtime helpers (e.g. type guards)
 │   └── __tests__/
 │       ├── setup.ts                 # Shared test setup and helpers
 │       ├── index.test.ts            # Tests for the extension entry point
 │       ├── config.test.ts           # Tests for configuration loading
 │       ├── hook-runner.test.ts      # Tests for the hook orchestrator and file resolution
-│       └── bash-file-detector.test.ts # Tests for bash command analysis
+│       ├── bash-file-detector.test.ts # Tests for bash command analysis
+│       ├── renderer.test.ts         # Tests for the TUI diagnostic renderer
+│       └── helpers.test.ts          # Tests for shared runtime helpers
 ├── skills/
-│   └── lens-hooks/
-│       └── SKILL.md             # Prompt skill for the pi agent (check guidelines)
+│   └── code-lens-explorer/
+│       └── SKILL.md             # Pi agent skill for codebase exploration
 ├── docs/
 │   ├── architecture.md          # Technical architecture deep-dive
 │   ├── configuration.md         # Configuration reference
@@ -125,6 +129,8 @@ pi-lens/
 - **`config.ts`** — Exports `loadConfig(cwd)` and `DEFAULT_CONFIG`. Reads `.pi-lens.json`, parses JSON, validates types per key (boolean, number, string array), and silently ignores unknown or mistyped keys.
 - **`hook-runner.ts`** — The orchestrator. `resolveFilesFromToolResult()` extracts file paths from tool events (direct paths for `write`/`edit`, pattern analysis for `bash`). `runChecks()` sends a `fullCheck` JSON-RPC request to the code-lens daemon via Unix socket and returns a `HookResult` with formatted text, per-check statuses, and duration. Also handles file filtering by include/exclude glob patterns.
 - **`bash-file-detector.ts`** — Analyzes bash command strings for file-writing patterns: sed, cat, echo, tee, perl, awk, python -c, dd, mv, cp, and shell redirects. Returns `{ written: string[], read: string[] }`. Best-effort — documented limitations include variable expansion, subshells, and eval.
+- **`renderer.ts`** — TUI diagnostic renderer registered via `pi.registerMessageRenderer()`. Exports `renderLensDiagnostics()` which formats per-check status (prettier, linters, LSP, tsc) with colour-coded icons and labels, plus optional expanded detail text. Uses an inline `DiagnosticPanel` class to satisfy the pi TUI component contract. Includes a `LensDiagnosticDetails` interface for typed message payloads and graceful error fallback.
+- **`helpers.ts`** — Shared runtime utilities. Exports `isRecord()`, a type guard for plain objects.
 
 All check execution (prettier, linters, LSP diagnostics, tsc) is handled by the `@harms-haus/code-lens` daemon. pi-lens communicates with it via a JSON-RPC protocol over Unix sockets.
 
@@ -193,6 +199,8 @@ const mockedExistsSync = vi.mocked(fs.existsSync);
 | `config.test.ts` | `config.ts` | Config loading, defaults, malformed JSON, unknown keys |
 | `hook-runner.test.ts` | `hook-runner.ts` | File resolution, daemon communication, glob filtering, error handling |
 | `bash-file-detector.test.ts` | `bash-file-detector.ts` | Command analysis patterns, edge cases, limitations |
+| `renderer.test.ts` | `renderer.ts` | All status types (clean/issues/error/skipped/running/pending), expanded/collapsed view, missing details, unknown status fallback |
+| `helpers.test.ts` | `helpers.ts` | Type guard behaviour |
 
 ## Pull Request Guidelines
 

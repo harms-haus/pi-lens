@@ -5,7 +5,12 @@ vi.mock("node:fs", () => ({
   readFileSync: vi.fn(),
 }));
 
-import { loadConfig, DEFAULT_CONFIG } from "../config.js";
+// Mock node:os to return a fixed home directory
+vi.mock("node:os", () => ({
+  homedir: () => "/home/testuser",
+}));
+
+import { loadConfig, loadRendererSetting, DEFAULT_CONFIG } from "../config.js";
 
 const CWD = "/home/user/project";
 
@@ -189,5 +194,71 @@ describe("loadConfig", () => {
     const config = loadConfig(CWD);
     // Mixed array should be rejected
     expect(config.excludePatterns).toEqual(DEFAULT_CONFIG.excludePatterns);
+  });
+});
+
+// ── loadRendererSetting ─────────────────────────────────────────────
+
+describe("loadRendererSetting", () => {
+  it("returns false when settings.json does not exist", async () => {
+    const { readFileSync } = await import("node:fs");
+    const err = new Error("ENOENT: no such file") as NodeJS.ErrnoException;
+    err.code = "ENOENT";
+    vi.mocked(readFileSync).mockImplementation(() => {
+      throw err;
+    });
+
+    const result = loadRendererSetting();
+    expect(result).toBe(false);
+  });
+
+  it("returns true when piLensRenderer is true", async () => {
+    const { readFileSync } = await import("node:fs");
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ piLensRenderer: true }));
+
+    const result = loadRendererSetting();
+    expect(result).toBe(true);
+  });
+
+  it("returns false when piLensRenderer is false", async () => {
+    const { readFileSync } = await import("node:fs");
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ piLensRenderer: false }));
+
+    const result = loadRendererSetting();
+    expect(result).toBe(false);
+  });
+
+  it("returns false when piLensRenderer field is missing", async () => {
+    const { readFileSync } = await import("node:fs");
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({}));
+
+    const result = loadRendererSetting();
+    expect(result).toBe(false);
+  });
+
+  it("returns false when JSON is malformed", async () => {
+    const { readFileSync } = await import("node:fs");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(readFileSync).mockReturnValue("not valid json");
+
+    const result = loadRendererSetting();
+    expect(result).toBe(false);
+    warnSpy.mockRestore();
+  });
+
+  it("returns false when JSON is not an object", async () => {
+    const { readFileSync } = await import("node:fs");
+    vi.mocked(readFileSync).mockReturnValue("null");
+
+    const result = loadRendererSetting();
+    expect(result).toBe(false);
+  });
+
+  it("returns false when piLensRenderer is wrong type", async () => {
+    const { readFileSync } = await import("node:fs");
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ piLensRenderer: "yes" }));
+
+    const result = loadRendererSetting();
+    expect(result).toBe(false);
   });
 });

@@ -11,6 +11,7 @@ vi.mock("@harms-haus/code-lens/client", () => ({
 
 vi.mock("../config.js", () => ({
   loadConfig: vi.fn(),
+  loadRendererSetting: vi.fn(() => false),
   DEFAULT_CONFIG: {
     prettier: true,
     linters: true,
@@ -28,6 +29,10 @@ vi.mock("../config.js", () => ({
   },
 }));
 
+vi.mock("../renderer.js", () => ({
+  renderLensDiagnostics: vi.fn(),
+}));
+
 vi.mock("../hook-runner.js", () => ({
   resolveFilesFromToolResult: vi.fn(),
   runChecks: vi.fn(),
@@ -37,7 +42,7 @@ vi.mock("node:fs", () => ({
   existsSync: vi.fn().mockReturnValue(true),
 }));
 
-import { loadConfig, DEFAULT_CONFIG } from "../config.js";
+import { loadConfig, loadRendererSetting, DEFAULT_CONFIG } from "../config.js";
 import { resolveFilesFromToolResult, runChecks } from "../hook-runner.js";
 import { ensureDaemon, stopDaemon } from "@harms-haus/code-lens/client";
 
@@ -158,6 +163,7 @@ function createNoActivityPartialResult() {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(loadConfig).mockReturnValue({ ...DEFAULT_CONFIG });
+  vi.mocked(loadRendererSetting).mockReturnValue(false);
 });
 
 // ── Extension loading ───────────────────────────────────────────────
@@ -1303,5 +1309,164 @@ describe("subagent session lifecycle", () => {
     await vi.runAllTimersAsync();
 
     expect(runChecks).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── Diagnostic Renderer ──────────────────────────────────────────────
+
+describe("diagnostic renderer", () => {
+  async function setupSessionWithWrite() {
+    const { pi, handlers } = createMockPi();
+    const ctx = createMockContext();
+    extension(pi);
+
+    const startHandler = handlers.get("session_start")!;
+    await startHandler({ type: "session_start", reason: "startup" }, ctx);
+
+    vi.mocked(resolveFilesFromToolResult).mockReturnValue(["/home/user/project/src/foo.ts"]);
+    vi.mocked(runChecks).mockResolvedValue({
+      text: "🔍 pi-lens: 1 file(s) checked\n  ⚠ tsc: 1 error(s)",
+      statuses: { prettier: "clean", linters: "clean", lsp: "clean", tsc: "issues" },
+      durationMs: 200,
+    });
+
+    return { pi, handlers, ctx };
+  }
+
+  it("registers message renderer at factory level", () => {
+    const { pi } = createMockPi();
+    extension(pi);
+    expect(pi.registerMessageRenderer).toHaveBeenCalledWith(
+      "pi-lens-diagnostics",
+      expect.any(Function),
+    );
+  });
+
+  it("does not send diagnostic message when renderer is disabled", async () => {
+    // loadRendererSetting returns false by default
+    const { pi, handlers, ctx } = await setupSessionWithWrite();
+
+    const toolResultHandler = handlers.get("tool_result")!;
+    await toolResultHandler(
+      {
+        type: "tool_result",
+        toolName: "write",
+        toolCallId: "call-renderer-disabled",
+        input: { path: "/home/user/project/src/foo.ts" },
+        content: [{ type: "text", text: "File written" }],
+        isError: false,
+      },
+      ctx,
+    );
+
+    expect(pi.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("sends diagnostic message when renderer is enabled", async () => {
+    vi.mocked(loadRendererSetting).mockReturnValue(true);
+    const { pi, handlers, ctx } = await setupSessionWithWrite();
+
+    const toolResultHandler = handlers.get("tool_result")!;
+    await toolResultHandler(
+      {
+        type: "tool_result",
+        toolName: "write",
+        toolCallId: "call-renderer-enabled",
+        input: { path: "/home/user/project/src/foo.ts" },
+        content: [{ type: "text", text: "File written" }],
+        isError: false,
+      },
+      ctx,
+    );
+
+    expect(pi.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customType: "pi-lens-diagnostics",
+      }),
+    );
+  });
+
+  it("still appends plain text when renderer is enabled", async () => {
+    vi.mocked(loadRendererSetting).mockReturnValue(true);
+    const { pi, handlers, ctx } = await setupSessionWithWrite();
+
+    const toolResultHandler = handlers.get("tool_result")!;
+    const result = (await toolResultHandler(
+      {
+        type: "tool_result",
+        toolName: "write",
+        toolCallId: "call-renderer-both",
+        input: { path: "/home/user/project/src/foo.ts" },
+        content: [{ type: "text", text: "File written" }],
+        isError: false,
+      },
+      ctx,
+    )) as { content: Array<{ type: string; text: string }> };
+
+    // Plain text should still be appended
+    expect(result.content).toHaveLength(2);
+    expect(result.content[0]!.text).toBe("File written");
+    expect(result.content[1]!.text).toContain("pi-lens");
+
+    // sendMessage should also have been called
+    expect(pi.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customType: "pi-lens-diagnostics",
+      }),
+    );
+  });
+
+  it("handles sendMessage failure gracefully", async () => {
+    vi.mocked(loadRendererSetting).mockReturnValue(true);
+    const { pi, handlers, ctx } = await setupSessionWithWrite();
+
+    vi.mocked(pi.sendMessage).mockImplementation(() => {
+      throw new Error("sendMessage failed");
+    });
+
+    const toolResultHandler = handlers.get("tool_result")!;
+    const result = (await toolResultHandler(
+      {
+        type: "tool_result",
+        toolName: "write",
+        toolCallId: "call-renderer-fail",
+        input: { path: "/home/user/project/src/foo.ts" },
+        content: [{ type: "text", text: "File written" }],
+        isError: false,
+      },
+      ctx,
+    )) as { content: Array<{ type: string; text: string }> };
+
+    // The tool_result should still return the original result with plain text
+    expect(result.content).toHaveLength(2);
+    expect(result.content[0]!.text).toBe("File written");
+    expect(result.content[1]!.text).toContain("pi-lens");
+  });
+
+  it("does not send message without diagnostic text", async () => {
+    vi.mocked(loadRendererSetting).mockReturnValue(true);
+    const { pi, handlers, ctx } = await setupSessionWithWrite();
+
+    // Override runChecks to return empty text (clean with alwaysReport=false)
+    vi.mocked(runChecks).mockResolvedValue({
+      text: "",
+      statuses: { prettier: "skipped", linters: "skipped", lsp: "skipped", tsc: "skipped" },
+      durationMs: 10,
+    });
+
+    const toolResultHandler = handlers.get("tool_result")!;
+    await toolResultHandler(
+      {
+        type: "tool_result",
+        toolName: "write",
+        toolCallId: "call-renderer-notext",
+        input: { path: "/home/user/project/src/foo.ts" },
+        content: [{ type: "text", text: "File written" }],
+        isError: false,
+      },
+      ctx,
+    );
+
+    expect(pi.sendMessage).not.toHaveBeenCalled();
   });
 });

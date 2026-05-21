@@ -9,11 +9,44 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { ensureDaemon, stopDaemon } from "@harms-haus/code-lens/client";
-import { loadConfig, DEFAULT_CONFIG } from "./config.js";
+import { loadConfig, DEFAULT_CONFIG, loadRendererSetting } from "./config.js";
 import { resolveFilesFromToolResult, runChecks } from "./hook-runner.js";
 import type { CheckStatus, LensStatusPayload } from "./types.js";
-import type { LensState } from "./hook-runner.js";
+import type { LensState, HookCheckStatuses } from "./hook-runner.js";
 import { isRecord } from "./helpers.js";
+import { renderLensDiagnostics } from "./renderer.js";
+import type { LensDiagnosticDetails } from "./renderer.js";
+
+// ── Module-level State ─────────────────────────────────────────────────
+
+let rendererEnabled = false;
+
+// ── Diagnostic Message Helper ───────────────────────────────────────────
+
+function sendDiagnosticMessage(
+  pi: ExtensionAPI,
+  _ctx: ExtensionContext,
+  result: { text: string; statuses: HookCheckStatuses; durationMs: number },
+  fileCount: number,
+): void {
+  try {
+    pi.sendMessage({
+      customType: "pi-lens-diagnostics",
+      content: result.text || "pi-lens: diagnostics complete",
+      display: true,
+      details: {
+        statuses: result.statuses,
+        hasIssues: result.text.includes("⚠") || result.text.includes("✗"),
+        fileCount,
+        durationMs: result.durationMs,
+        sectionsText: result.text,
+      } satisfies LensDiagnosticDetails,
+    });
+  } catch (e) {
+    // Never fail the original tool result
+    console.warn("pi-lens: failed to send diagnostic message", e);
+  }
+}
 
 // ── Status Bar Helpers ─────────────────────────────────────────────────
 
@@ -98,6 +131,7 @@ function createSubagentChecker(
     lsp: CheckStatus;
     tsc: CheckStatus;
   }) => void,
+  getContext: () => ExtensionContext | undefined,
 ): SubagentChecker {
   let lastCheckTime = 0;
   let checkInFlight = false;
@@ -124,6 +158,13 @@ function createSubagentChecker(
       if (shutdown) return;
       publishStatus(result.statuses);
       lastCheckTime = Date.now();
+
+      if (rendererEnabled && result.text) {
+        const ctx = getContext();
+        if (ctx) {
+          sendDiagnosticMessage(pi, ctx, result, files.length);
+        }
+      }
 
       if (hasPendingCheck) {
         hasPendingCheck = false;
@@ -223,7 +264,12 @@ export default function (pi: ExtensionAPI): void {
     }
   }
 
-  const checker = createSubagentChecker(pi, state, publishStatus);
+  const checker = createSubagentChecker(pi, state, publishStatus, () => currentCtx);
+
+  // ── Register Renderer ──────────────────────────────────────────────
+
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any -- renderer type doesn't perfectly match MessageRenderer<unknown> but is functionally compatible
+  pi.registerMessageRenderer("pi-lens-diagnostics", renderLensDiagnostics as any);
 
   // ── Session Lifecycle ──────────────────────────────────────────────
 
@@ -231,6 +277,7 @@ export default function (pi: ExtensionAPI): void {
     state.cwd = ctx.cwd;
     currentCtx = ctx;
     state.config = loadConfig(ctx.cwd);
+    rendererEnabled = loadRendererSetting();
 
     // Start or connect to daemon
     await ensureDaemon(ctx.cwd);
@@ -251,6 +298,7 @@ export default function (pi: ExtensionAPI): void {
       currentCtx.ui.setStatus("pi-lens", undefined);
     }
     state.config = DEFAULT_CONFIG;
+    rendererEnabled = false;
     currentCtx = undefined;
     lastStatus = undefined;
   });
@@ -276,6 +324,11 @@ export default function (pi: ExtensionAPI): void {
 
       // Update status bar with check results
       publishStatus(result.statuses);
+
+      // Send diagnostic message if renderer is enabled
+      if (rendererEnabled && result.text) {
+        sendDiagnosticMessage(pi, ctx, result, files.length);
+      }
 
       // Always report (even when clean, per config.alwaysReport)
       if (result.text) {

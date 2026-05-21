@@ -19,15 +19,16 @@ pi-lens hooks after every `write`, `edit`, and `bash` tool call and automaticall
 - **Bash file detection** — Analyzes bash commands (`sed`, `cat`, `echo`, `tee`, `perl`, `awk`, `mv`, `cp`, etc.) to detect affected files
 - **Subagent monitoring** — Detects file changes from subagent (`delegate_to_subagents`) tool calls in real-time and runs checks with a 5-second cooldown to avoid excessive daemon load
 - **Unified status bar** — Single `pi-lens` status display combining all check results
+- **Rich TUI diagnostic panel** — Color-coded status indicators with ✅⚠✗⊘ icons (opt-in via `piLensRenderer` setting)
 
 ## Installation
 
 ### Prerequisites
 
-pi-lens requires the `@harms-haus/code-lens` daemon for check execution. Install it globally:
+pi-lens requires the `@harms-haus/code-lens` daemon for check execution. The dependency is installed automatically with pi-lens. For standalone CLI use, you can optionally install it globally:
 
 ```bash
-npm i -g @harms-haus/code-lens
+npm i -g @harms-haus/code-lens   # optional — only needed for standalone CLI use
 ```
 
 ### Install pi-lens
@@ -81,6 +82,28 @@ pi-lens is configured via a `.pi-lens.json` file in your project root. If no con
 ```
 
 All fields are optional — only include the ones you want to override. See [docs/configuration.md](docs/configuration.md) for the full reference.
+
+### TUI diagnostic renderer
+
+pi-lens can display a rich, color-coded diagnostic panel in the pi TUI after each check run. This is opt-in and disabled by default.
+
+Enable it by adding the `piLensRenderer` setting to your global pi agent settings file (`~/.pi/agent/settings.json`):
+
+```json
+{
+  "piLensRenderer": true
+}
+```
+
+| Setting | File | Default | Description |
+|---------|------|---------|-------------|
+| `piLensRenderer` | `~/.pi/agent/settings.json` | `false` | Show a color-coded TUI diagnostic panel after checks |
+
+When enabled:
+- A diagnostic panel appears after every `write`/`edit`/`bash` that triggers checks
+- The panel shows a header (file count, duration, pass/fail) and per-check status lines with color-coded icons
+- Press **Ctrl+E** to expand the panel and see full diagnostic details
+- The existing plain-text output is still appended to tool results for the AI agent
 
 ### Quick examples
 
@@ -250,6 +273,39 @@ When all checks pass:
 🔍 pi-lens: 1 file(s) checked — all clean (89ms)
 ```
 
+### Rendered diagnostic panel (TUI)
+
+When the `piLensRenderer` setting is enabled, checks also produce a color-coded panel in the TUI:
+
+**All checks clean:**
+```
+🔍 pi-lens: 1 file(s) checked — all clean (234ms)        (green)
+  ✅ prettier: clean                                      (green)
+  ✅ linters: clean                                        (green)
+  ✅ lsp: clean                                            (green)
+  ✅ tsc: clean                                            (green)
+```
+
+**Issues found:**
+```
+🔍 pi-lens: 1 file(s) checked — issues found (1200ms)    (yellow)
+  ✅ prettier: clean                                      (green)
+  ⚠ linters: 2 warning(s)                                 (yellow)
+  ✅ lsp: clean                                            (green)
+  ✅ tsc: clean                                            (green)
+```
+
+**With errors and skipped checks:**
+```
+🔍 pi-lens: 2 file(s) checked — issues found (890ms)     (yellow)
+  ✗ prettier: error                                       (red)
+  ⚠ linters: 1 error(s), 3 warning(s)                    (yellow)
+  ✅ lsp: clean                                            (green)
+  ⊘ tsc: skipped                                          (dim)
+```
+
+Press **Ctrl+E** to expand any panel and view the full diagnostic output (lint messages, formatting details, etc.).
+
 ## Status Bar
 
 pi-lens publishes a unified status bar payload with an aggregate `CheckStatus` per check category. Each category reports one of: `pending`, `running`, `clean`, `issues`, `error`, or `skipped`.
@@ -273,7 +329,9 @@ pi-lens/
 │   ├── index.ts               # Extension entry point — session lifecycle, hook registration, status bar
 │   ├── hook-runner.ts         # File resolution, daemon communication, result formatting
 │   ├── config.ts              # .pi-lens.json loading and defaults
+│   ├── helpers.ts             # Shared runtime helpers (type guards)
 │   ├── types.ts               # Shared types (LensConfig, CheckStatus, LensStatusPayload)
+│   ├── renderer.ts            # TUI diagnostic panel renderer (color-coded status display)
 │   └── bash-file-detector.ts  # Bash command analysis for file-writing patterns
 ├── skills/
 │   └── code-lens-explorer/
