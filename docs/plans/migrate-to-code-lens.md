@@ -44,6 +44,7 @@ registerCommand("fileChanged", async (params, manager, _cwd) => {
 ```
 
 **Behavior**:
+
 - Params: `{ file: string }` (required)
 - Calls `manager.onFileChanged(file)` which opens/updates the file in the LSP server
 - Returns `{ skipped: true }` in details when no LSP server supports the file
@@ -71,7 +72,7 @@ Add a `raw` boolean parameter:
 async function handleSingleFileDiagnostics(
   file: string,
   refresh: boolean,
-  raw: boolean,    // NEW
+  raw: boolean, // NEW
   manager: LspManager,
   cwd: string,
 ) {
@@ -80,29 +81,29 @@ async function handleSingleFileDiagnostics(
 
   const { filePath, config } = preamble.ok;
   const diagnostics = await manager.getDiagnostics(filePath, refresh);
-  const { errors: errorCount, warnings: warningCount, info: infoCount } =
-    countSeverities(diagnostics);
+  const {
+    errors: errorCount,
+    warnings: warningCount,
+    info: infoCount,
+  } = countSeverities(diagnostics);
 
   // When raw=true, include structured Diagnostic[] in details
   if (raw) {
-    return ok(
-      `${diagnostics.length} diagnostic(s) for ${file} (${config.language})`,
-      {
-        file,
-        language: config.language,
-        errorCount,
-        warningCount,
-        infoCount,
-        total: diagnostics.length,
-        diagnostics: diagnostics.map(d => ({
-          range: d.range,
-          severity: d.severity,
-          code: d.code,
-          source: d.source,
-          message: d.message,
-        })),
-      },
-    );
+    return ok(`${diagnostics.length} diagnostic(s) for ${file} (${config.language})`, {
+      file,
+      language: config.language,
+      errorCount,
+      warningCount,
+      infoCount,
+      total: diagnostics.length,
+      diagnostics: diagnostics.map((d) => ({
+        range: d.range,
+        severity: d.severity,
+        code: d.code,
+        source: d.source,
+        message: d.message,
+      })),
+    });
   }
 
   // ... existing formatted text output unchanged ...
@@ -139,7 +140,13 @@ Pass `raw` to `handleSingleFileDiagnostics(params.file, refresh, raw, manager, c
  */
 
 export { sendRequest, probeSocket } from "./daemon/client.js";
-export { ensureDaemon, startDaemon, stopDaemon, isDaemonRunning, DAEMON_VERSION } from "./daemon/lifecycle.js";
+export {
+  ensureDaemon,
+  startDaemon,
+  stopDaemon,
+  isDaemonRunning,
+  DAEMON_VERSION,
+} from "./daemon/lifecycle.js";
 export { getSocketPath, getMetadataPath } from "./utils/socket-path.js";
 export type { DaemonMetadata } from "./utils/socket-path.js";
 export type { DaemonRequest, DaemonResponse } from "./daemon/protocol.js";
@@ -160,7 +167,12 @@ export type { LspServerConfig } from "./lsp/types.js";
  */
 
 export { LspManager, DEFAULT_IDLE_TIMEOUT_MS } from "./lsp/lsp-manager.js";
-export type { LspServerConfig, ServerStatus, LspServerInstance, LspManagerState } from "./lsp/types.js";
+export type {
+  LspServerConfig,
+  ServerStatus,
+  LspServerInstance,
+  LspManagerState,
+} from "./lsp/types.js";
 export { languageFromPath, isServerInstalled } from "./lsp/language-config.js";
 export { LspClient } from "./lsp/lsp-client-methods.js";
 ```
@@ -218,7 +230,7 @@ export default defineConfig([
   {
     // Library entry — NEW
     entry: {
-      "lib": "src/lib.ts",
+      lib: "src/lib.ts",
       "lib-client": "src/lib-client.ts",
       "lib-lsp": "src/lib-lsp.ts",
     },
@@ -236,6 +248,7 @@ export default defineConfig([
 ```
 
 **Key decisions**:
+
 - `dts: true` generates `.d.ts` files so pi-lens gets types
 - `clean: false` preserves the cli.js and server.js from the first two entries
 - Library bundles do NOT externalize `commander` — the daemon client code doesn't use it (only `node:net`, `node:child_process`, `node:fs`, `node:crypto`, `node:os`, `node:path`, `node:readline`). `commander` imports only exist in `cli.ts` which is not included.
@@ -288,6 +301,7 @@ npm run build
 ```
 
 **Verify**:
+
 - `dist/lib.js`, `dist/lib-client.js`, `dist/lib-lsp.js` exist
 - `dist/lib.d.ts`, `dist/lib-client.d.ts`, `dist/lib-lsp.d.ts` exist
 - `dist/cli.js` still has the shebang
@@ -299,11 +313,13 @@ npm run build
 **File to modify**: `pi-lens/package.json`
 
 Add to `dependencies`:
+
 ```json
 "@harms-haus/code-lens": "^0.2.0"
 ```
 
 Remove from `dependencies` (no longer imported directly):
+
 ```json
 "vscode-languageserver-types": "^3.17.5"
 ```
@@ -337,16 +353,19 @@ Actually, wait — pi-lens's `hook-runner.ts` imports `type { Diagnostic } from 
 **File to modify**: `pi-lens/src/index.ts`
 
 **Remove imports**:
+
 ```ts
 import { LspManager, DEFAULT_IDLE_TIMEOUT_MS } from "./lsp-manager.js";
 ```
 
 **Add imports**:
+
 ```ts
 import { ensureDaemon, stopDaemon, getSocketPath } from "@harms-haus/code-lens/client";
 ```
 
 **Change `LensState` interface**:
+
 ```ts
 interface LensState {
   detectedLinters: DetectedLinter[];
@@ -359,6 +378,7 @@ interface LensState {
 ```
 
 **Change `session_start` handler**:
+
 ```ts
 pi.on("session_start", async (_event, ctx) => {
   state.cwd = ctx.cwd;
@@ -380,6 +400,7 @@ pi.on("session_start", async (_event, ctx) => {
 ```
 
 **Change `session_shutdown` handler**:
+
 ```ts
 pi.on("session_shutdown", async () => {
   // Stop daemon (NEW — replaces lspManager.stopAll())
@@ -393,6 +414,7 @@ pi.on("session_shutdown", async () => {
 **File to modify**: `pi-lens/src/hook-runner.ts`
 
 **Remove imports**:
+
 ```ts
 import type { Diagnostic } from "vscode-languageserver-types";
 import type { LspManager } from "./lsp-manager.js";
@@ -400,6 +422,7 @@ import { languageFromPath } from "./language-config.js";
 ```
 
 **Add imports**:
+
 ```ts
 import { sendRequest, getSocketPath, languageFromPath } from "@harms-haus/code-lens/client";
 import type { Diagnostic } from "vscode-languageserver-types";
@@ -408,6 +431,7 @@ import type { Diagnostic } from "vscode-languageserver-types";
 > `Diagnostic` type stays — it's used for local variable typing of the parsed response.
 
 **Update `LensState` interface** (re-exported from hook-runner.ts):
+
 ```ts
 export interface LensState {
   detectedLinters: DetectedLinter[];
@@ -428,7 +452,7 @@ async function runLspCheck(
   files: string[],
   cwd: string,
   config: LensConfig,
-  _state: LensState,   // no longer uses lspManager
+  _state: LensState, // no longer uses lspManager
   signal?: AbortSignal,
 ): Promise<{ section: string | null; status: CheckStatus; hasIssues: boolean }> {
   if (!config.lsp) {
@@ -494,6 +518,7 @@ async function runLspCheck(
 ```
 
 **Key differences from old code**:
+
 - No `LspManager` reference — uses `sendRequest` over socket
 - `requestIdCounter` is a module-level counter for unique request IDs
 - Calls `fileChanged` command per file (replaces `lspManager.onFileChanged`)
@@ -504,6 +529,7 @@ async function runLspCheck(
 ### 1.10 — Delete LSP files from pi-lens
 
 **Files to delete**:
+
 - `pi-lens/src/lsp-client.ts`
 - `pi-lens/src/lsp-client-methods.ts`
 - `pi-lens/src/lsp-manager.ts`
@@ -519,12 +545,14 @@ async function runLspCheck(
 **File to modify**: `pi-lens/src/types.ts`
 
 **Remove** the entire LSP types section:
+
 - `LspServerConfig` interface
 - `ServerStatus` type
 - `LspServerInstance` interface
 - `LspManagerState` interface
 
 **Keep** all non-LSP types:
+
 - `LintIssue`, `LinterDefinition`, `DetectedLinter`
 - `PrettierResult`, `TscIssue`
 - `LensConfig`, `CheckStatus`, `LensStatusPayload`
@@ -546,6 +574,7 @@ Check whether `getSanitizedEnv` is used by any remaining pi-lens modules. After 
 **File to modify**: `pi-lens/src/__tests__/index.test.ts`
 
 **Replace the `lsp-manager.js` mock**:
+
 ```ts
 // REMOVE:
 vi.mock("../lsp-manager.js", () => ({
@@ -569,9 +598,11 @@ vi.mock("@harms-haus/code-lens/client", () => ({
 ```
 
 **Update `session_start` test assertions**:
+
 - Replace `expect(LspManager).toHaveBeenCalledWith(...)` with `expect(ensureDaemon).toHaveBeenCalledWith("/home/user/project")`
 
 **Update `session_shutdown` test assertions**:
+
 - Replace `expect(mockLspManager.stopAll).toHaveBeenCalled()` with `expect(stopDaemon).toHaveBeenCalledWith("/home/user/project")`
 
 #### `pi-lens/src/__tests__/hook-runner.test.ts`
@@ -579,6 +610,7 @@ vi.mock("@harms-haus/code-lens/client", () => ({
 **File to modify**: `pi-lens/src/__tests__/hook-runner.test.ts`
 
 **Replace mocks**:
+
 ```ts
 // REMOVE:
 vi.mock("../language-config.js", () => ({
@@ -599,6 +631,7 @@ vi.mock("@harms-haus/code-lens/client", () => ({
 ```
 
 **Update the `LensState` type used in tests**:
+
 ```ts
 // Remove lspManager from LensState objects in test data:
 const state: LensState = {
@@ -615,35 +648,38 @@ const state: LensState = {
 
 ### 1.14 — Phase 1 Acceptance Criteria
 
-| Criterion | How to Verify |
-|---|---|
-| code-lens-cli builds with library entries | `cd ../code-lens-cli && npm run build` — check `dist/lib*.js` and `dist/lib*.d.ts` exist |
-| code-lens-cli tests pass | `cd ../code-lens-cli && npm run test` |
-| pi-lens has no LSP imports from local files | `grep -r "from.*\./lsp" pi-lens/src/` returns nothing |
-| pi-lens typecheck passes | `cd pi-lens && npm run typecheck` |
-| pi-lens tests pass | `cd pi-lens && npm run test` |
-| pi-lens lint passes | `cd pi-lens && npm run lint` |
-| pi-lens coverage ≥ 90% | `cd pi-lens && npm run test:coverage` |
-| Daemon starts on `session_start` | Unit test: `ensureDaemon` called with `ctx.cwd` |
-| Daemon stops on `session_shutdown` | Unit test: `stopDaemon` called with `state.cwd` |
-| LSP check sends daemon requests | Unit test: `sendRequest` called with `fileChanged` and `diagnostics` methods |
+| Criterion                                       | How to Verify                                                                                  |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| code-lens-cli builds with library entries       | `cd ../code-lens-cli && npm run build` — check `dist/lib*.js` and `dist/lib*.d.ts` exist       |
+| code-lens-cli tests pass                        | `cd ../code-lens-cli && npm run test`                                                          |
+| pi-lens has no LSP imports from local files     | `grep -r "from.*\./lsp" pi-lens/src/` returns nothing                                          |
+| pi-lens typecheck passes                        | `cd pi-lens && npm run typecheck`                                                              |
+| pi-lens tests pass                              | `cd pi-lens && npm run test`                                                                   |
+| pi-lens lint passes                             | `cd pi-lens && npm run lint`                                                                   |
+| pi-lens coverage ≥ 90%                          | `cd pi-lens && npm run test:coverage`                                                          |
+| Daemon starts on `session_start`                | Unit test: `ensureDaemon` called with `ctx.cwd`                                                |
+| Daemon stops on `session_shutdown`              | Unit test: `stopDaemon` called with `state.cwd`                                                |
+| LSP check sends daemon requests                 | Unit test: `sendRequest` called with `fileChanged` and `diagnostics` methods                   |
 | `raw: true` diagnostics returns structured data | Integration: daemon `diagnostics` command with `raw=true` includes `details.diagnostics` array |
 
 ### 1.15 — Phase 1 Files Summary
 
 **code-lens-cli — Files created**:
+
 - `src/commands/file-changed.ts`
 - `src/lib-client.ts`
 - `src/lib-lsp.ts`
 - `src/lib.ts`
 
 **code-lens-cli — Files modified**:
+
 - `src/commands/diagnostics.ts` — add `raw` param
 - `src/server.ts` — add `file-changed.js` import
 - `tsup.config.ts` — add library entry
 - `package.json` — add `exports`, bump version
 
 **pi-lens — Files modified**:
+
 - `package.json` — add `@harms-haus/code-lens` dep, move `vscode-languageserver-types` to devDeps
 - `src/index.ts` — replace LspManager with daemon client
 - `src/hook-runner.ts` — replace LspManager with daemon requests
@@ -652,6 +688,7 @@ const state: LensState = {
 - `src/__tests__/hook-runner.test.ts` — update mocks and assertions
 
 **pi-lens — Files deleted**:
+
 - `src/lsp-client.ts`
 - `src/lsp-client-methods.ts`
 - `src/lsp-manager.ts`
@@ -663,6 +700,7 @@ const state: LensState = {
 - `src/__tests__/language-config.test.ts`
 
 **pi-lens — Files OUT OF SCOPE for Phase 1**:
+
 - `src/config.ts` — unchanged
 - `src/bash-file-detector.ts` — unchanged
 - `src/prettier-runner.ts` — unchanged
@@ -686,6 +724,7 @@ Phase 2 moves the linter, prettier, tsc, and related utilities from pi-lens into
 **File to modify**: `code-lens-cli/src/utils/spawn.ts` (or create new)
 
 pi-lens's `src/spawn-utils.ts` has:
+
 - `execCommand(command: string, cwd: string, timeout?: number, signal?: AbortSignal): Promise<ExecResult>`
 - `ExecResult { stdout: string; stderr: string; exitCode: number | null; error?: string }`
 - `getSanitizedEnv(): NodeJS.ProcessEnv`
@@ -700,15 +739,15 @@ code-lens-cli already has `getSanitizedEnv()` in `src/utils/env.ts`. Add `execCo
 
 Copy the following from pi-lens, placing them in a `src/linting/` subdirectory:
 
-| Source (pi-lens) | Destination (code-lens-cli) | Notes |
-|---|---|---|
-| `src/parsers.ts` | `src/linting/parsers.ts` | 11 linter output parsers |
-| `src/definitions.ts` | `src/linting/definitions.ts` | 11 linter definitions |
-| `src/linter-registry.ts` | `src/linting/linter-registry.ts` | `detectLinters()`, `getLintersForFile()` |
-| `src/linter-runner.ts` | `src/linting/linter-runner.ts` | `runLinter()`, `runLinters()` |
-| `src/prettier-runner.ts` | `src/linting/prettier-runner.ts` | `isPrettierAvailable()`, `runPrettier()` |
-| `src/tsc-runner.ts` | `src/linting/tsc-runner.ts` | `isTscAvailable()`, `runTsc()` |
-| `src/bash-file-detector.ts` | `src/linting/bash-file-detector.ts` | `detectFilesFromBashCommand()` |
+| Source (pi-lens)            | Destination (code-lens-cli)         | Notes                                    |
+| --------------------------- | ----------------------------------- | ---------------------------------------- |
+| `src/parsers.ts`            | `src/linting/parsers.ts`            | 11 linter output parsers                 |
+| `src/definitions.ts`        | `src/linting/definitions.ts`        | 11 linter definitions                    |
+| `src/linter-registry.ts`    | `src/linting/linter-registry.ts`    | `detectLinters()`, `getLintersForFile()` |
+| `src/linter-runner.ts`      | `src/linting/linter-runner.ts`      | `runLinter()`, `runLinters()`            |
+| `src/prettier-runner.ts`    | `src/linting/prettier-runner.ts`    | `isPrettierAvailable()`, `runPrettier()` |
+| `src/tsc-runner.ts`         | `src/linting/tsc-runner.ts`         | `isTscAvailable()`, `runTsc()`           |
+| `src/bash-file-detector.ts` | `src/linting/bash-file-detector.ts` | `detectFilesFromBashCommand()`           |
 
 **Import path updates**: Change internal imports from `./spawn-utils.js` → `../utils/spawn.js`, `./types.js` → `./types.js` (new local types file), etc.
 
@@ -717,6 +756,7 @@ Copy the following from pi-lens, placing them in a `src/linting/` subdirectory:
 **File to create**: `code-lens-cli/src/linting/types.ts`
 
 Extract from `pi-lens/src/types.ts`:
+
 - `LintIssue`
 - `LinterDefinition`
 - `DetectedLinter`
@@ -729,6 +769,7 @@ Extract from `pi-lens/src/types.ts`:
 **File to create**: `code-lens-cli/src/linting/output-formatter.ts`
 
 Copy from `pi-lens/src/output-formatter.ts`:
+
 - `formatIssues()`
 - `summarizeIssues()`
 
@@ -739,6 +780,7 @@ Do NOT copy the LSP diagnostic formatting functions (`countSeverities`, `formatD
 **Files to create in `code-lens-cli/src/commands/`**:
 
 #### `lint.ts`
+
 ```ts
 registerCommand("lint", async (params, _manager, cwd) => {
   // params: { files: string[], maxConcurrency?: number, timeoutMs?: number }
@@ -749,6 +791,7 @@ registerCommand("lint", async (params, _manager, cwd) => {
 ```
 
 #### `prettier.ts`
+
 ```ts
 registerCommand("prettier", async (params, _manager, cwd) => {
   // params: { files: string[], timeoutMs?: number }
@@ -759,6 +802,7 @@ registerCommand("prettier", async (params, _manager, cwd) => {
 ```
 
 #### `tsc.ts`
+
 ```ts
 registerCommand("tsc", async (params, _manager, cwd) => {
   // params: { files: string[], timeoutMs?: number }
@@ -769,6 +813,7 @@ registerCommand("tsc", async (params, _manager, cwd) => {
 ```
 
 #### `fullCheck.ts`
+
 ```ts
 registerCommand("fullCheck", async (params, manager, cwd) => {
   // params: { files: string[], config: { prettier, linters, lsp, tsc, ... } }
@@ -778,6 +823,7 @@ registerCommand("fullCheck", async (params, manager, cwd) => {
 ```
 
 **Register in `server.ts`**: Add side-effect imports:
+
 ```ts
 import "./commands/lint.js";
 import "./commands/prettier.js";
@@ -842,6 +888,7 @@ Parse the `CommandResult.details` for structured results and format the output t
 ### 2.8 — Delete migrated modules from pi-lens
 
 **Files to delete from pi-lens** (after Phase 2):
+
 - `src/spawn-utils.ts`
 - `src/parsers.ts`
 - `src/definitions.ts`
@@ -863,12 +910,14 @@ Parse the `CommandResult.details` for structured results and format the output t
 ### 2.9 — pi-lens becomes a thin client
 
 After Phase 2, `pi-lens/src/` contains only:
+
 - `index.ts` — extension entry point (hooks, lifecycle)
 - `hook-runner.ts` — file resolution + daemon orchestration
 - `types.ts` — `LensConfig`, `CheckStatus`, `LensStatusPayload` (no linter/LSP types)
 - `config.ts` — `.pi-lens.json` loader
 
 pi-lens responsibility:
+
 1. Register hooks (`session_start`, `session_shutdown`, `tool_result`)
 2. Load config from `.pi-lens.json`
 3. Resolve affected files from tool results
@@ -878,20 +927,21 @@ pi-lens responsibility:
 
 ### 2.10 — Phase 2 Acceptance Criteria
 
-| Criterion | How to Verify |
-|---|---|
-| All linting modules exist in code-lens-cli | `ls ../code-lens-cli/src/linting/` shows all files |
-| code-lens-cli builds and tests pass | `cd ../code-lens-cli && npm run build && npm run test` |
+| Criterion                                        | How to Verify                                                                                                         |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| All linting modules exist in code-lens-cli       | `ls ../code-lens-cli/src/linting/` shows all files                                                                    |
+| code-lens-cli builds and tests pass              | `cd ../code-lens-cli && npm run build && npm run test`                                                                |
 | pi-lens has no linter/prettier/tsc local imports | `grep -r "from.*\./\(linter\|prettier\|tsc\|parser\|definition\|spawn\|output-format\)" pi-lens/src/` returns nothing |
-| pi-lens typecheck passes | `npm run typecheck` |
-| pi-lens tests pass with daemon mocks | `npm run test` |
-| pi-lens coverage ≥ 90% | `npm run test:coverage` |
-| `fullCheck` daemon command runs all 4 checks | Integration test in code-lens-cli |
-| Linter detection cached across calls | Unit test: `detectLinters` called once, cached on second call |
+| pi-lens typecheck passes                         | `npm run typecheck`                                                                                                   |
+| pi-lens tests pass with daemon mocks             | `npm run test`                                                                                                        |
+| pi-lens coverage ≥ 90%                           | `npm run test:coverage`                                                                                               |
+| `fullCheck` daemon command runs all 4 checks     | Integration test in code-lens-cli                                                                                     |
+| Linter detection cached across calls             | Unit test: `detectLinters` called once, cached on second call                                                         |
 
 ### 2.11 — Phase 2 Files Summary
 
 **code-lens-cli — Files created**:
+
 - `src/linting/types.ts`
 - `src/linting/parsers.ts`
 - `src/linting/definitions.ts`
@@ -909,12 +959,14 @@ pi-lens responsibility:
 - Tests for all new modules in `tests/linting/`
 
 **code-lens-cli — Files modified**:
+
 - `src/server.ts` — add command imports
 - `src/daemon/server.ts` — optional: add caching fields
 - `package.json` — bump version to `0.3.0`
 - `tsup.config.ts` — ensure linting modules are bundled
 
 **pi-lens — Files modified**:
+
 - `src/index.ts` — simplify (no more local detection)
 - `src/hook-runner.ts` — replace all local runners with `sendRequest("fullCheck", ...)`
 - `src/types.ts` — remove all linter/prettier/tsc types
@@ -924,6 +976,7 @@ pi-lens responsibility:
 - `package.json` — bump version to `2.0.0`
 
 **pi-lens — Files deleted**:
+
 - All files listed in §2.8
 
 ---
@@ -934,16 +987,16 @@ pi-lens responsibility:
 
 **Migrate tests from pi-lens to code-lens-cli**:
 
-| Source test (pi-lens) | Destination (code-lens-cli) | Notes |
-|---|---|---|
-| `src/__tests__/parsers.test.ts` | `tests/linting/parsers.test.ts` | Adapt import paths |
-| `src/__tests__/definitions.test.ts` | `tests/linting/definitions.test.ts` | Adapt import paths |
-| `src/__tests__/linter-registry.test.ts` | `tests/linting/linter-registry.test.ts` | Adapt import paths |
-| `src/__tests__/linter-runner.test.ts` | `tests/linting/linter-runner.test.ts` | Adapt import paths |
-| `src/__tests__/prettier-runner.test.ts` | `tests/linting/prettier-runner.test.ts` | Adapt import paths |
-| `src/__tests__/tsc-runner.test.ts` | `tests/linting/tsc-runner.test.ts` | Adapt import paths |
+| Source test (pi-lens)                      | Destination (code-lens-cli)                | Notes              |
+| ------------------------------------------ | ------------------------------------------ | ------------------ |
+| `src/__tests__/parsers.test.ts`            | `tests/linting/parsers.test.ts`            | Adapt import paths |
+| `src/__tests__/definitions.test.ts`        | `tests/linting/definitions.test.ts`        | Adapt import paths |
+| `src/__tests__/linter-registry.test.ts`    | `tests/linting/linter-registry.test.ts`    | Adapt import paths |
+| `src/__tests__/linter-runner.test.ts`      | `tests/linting/linter-runner.test.ts`      | Adapt import paths |
+| `src/__tests__/prettier-runner.test.ts`    | `tests/linting/prettier-runner.test.ts`    | Adapt import paths |
+| `src/__tests__/tsc-runner.test.ts`         | `tests/linting/tsc-runner.test.ts`         | Adapt import paths |
 | `src/__tests__/bash-file-detector.test.ts` | `tests/linting/bash-file-detector.test.ts` | Adapt import paths |
-| `src/__tests__/spawn-utils.test.ts` | `tests/utils/spawn.test.ts` | Adapt import paths |
+| `src/__tests__/spawn-utils.test.ts`        | `tests/utils/spawn.test.ts`                | Adapt import paths |
 
 **Vitest version consideration**: code-lens-cli uses vitest `^4.1.6`, pi-lens uses `^3.0.0`. The test API surface used (`describe`, `it`, `expect`, `vi`, `beforeEach`) is identical between v3 and v4. Migrated tests should work without changes beyond import paths.
 
@@ -964,6 +1017,7 @@ In code-lens-cli, add integration tests in `tests/commands/`:
 - `tests/commands/fullCheck.test.ts` — verify the `fullCheck` command
 
 Each test should:
+
 1. Create a `DaemonServer` instance via `createServer()`
 2. Register the command handler
 3. Call `handleRequest()` with appropriate params
@@ -972,7 +1026,8 @@ Each test should:
 ### 3.4 — Update READMEs
 
 **code-lens-cli README**: Add section on library usage:
-```markdown
+
+````markdown
 ## Library Usage
 
 @harms-haus/code-lens can be used as a library:
@@ -989,11 +1044,14 @@ const result = await sendRequest(socketPath, {
   id: 1,
 });
 ```
+````
 
 Subpath exports:
+
 - `@harms-haus/code-lens` — re-exports all
 - `@harms-haus/code-lens/client` — daemon client functions
 - `@harms-haus/code-lens/lsp` — direct LspManager access
+
 ```
 
 **pi-lens README**: Update architecture section to document the daemon dependency.
@@ -1079,3 +1137,4 @@ Phase 2 rollback:
 3. Step 3.3 (integration tests for new commands)
 4. Step 3.4 (documentation)
 5. Step 3.5 (acceptance checks)
+```

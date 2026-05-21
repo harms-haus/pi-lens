@@ -19,6 +19,7 @@ pi-lens is a thin client extension for the pi coding agent. It detects files cha
 ```
 
 **pi-lens** is responsible only for:
+
 - Registering hooks (`session_start`, `session_shutdown`, `tool_result`, `tool_execution_update`, `tool_execution_end`)
 - Resolving which files were affected by a tool call
 - Monitoring subagent activity during `delegate_to_subagents` and checking git-changed files
@@ -27,18 +28,19 @@ pi-lens is a thin client extension for the pi coding agent. It detects files cha
 - Rendering diagnostic results in the TUI via a custom message renderer (`registerMessageRenderer`)
 
 **@harms-haus/code-lens** (the daemon) is responsible for:
+
 - Executing all checks (prettier, linters, LSP diagnostics, tsc)
 - Caching linter detection, tool availability, and LSP server instances across requests
 - Managing LSP server lifecycle (lazy start, idle timeout, diagnostics cache)
 
 pi-lens exposes three integration points:
 
-| Integration | Event | Description |
-|---|---|---|
-| Event Hook | `tool_result` | Resolves affected files from write/edit/bash calls and sends them to the daemon for a full check |
-| Event Hook | `tool_execution_update` | Monitors `delegate_to_subagents` for tool activity and triggers checks on git-changed files with a 5-second cooldown |
-| Event Hook | `tool_execution_end` | Forces a final check when `delegate_to_subagents` completes, bypassing cooldown |
-| Message Renderer | `pi-lens-diagnostics` | Custom renderer registered via `pi.registerMessageRenderer()` that displays check results with colour-coded status icons in the TUI |
+| Integration      | Event                   | Description                                                                                                                         |
+| ---------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Event Hook       | `tool_result`           | Resolves affected files from write/edit/bash calls and sends them to the daemon for a full check                                    |
+| Event Hook       | `tool_execution_update` | Monitors `delegate_to_subagents` for tool activity and triggers checks on git-changed files with a 5-second cooldown                |
+| Event Hook       | `tool_execution_end`    | Forces a final check when `delegate_to_subagents` completes, bypassing cooldown                                                     |
+| Message Renderer | `pi-lens-diagnostics`   | Custom renderer registered via `pi.registerMessageRenderer()` that displays check results with colour-coded status icons in the TUI |
 
 The `tool_result` hook operates on individual tool calls (synchronous, blocking). The subagent hooks (`tool_execution_update` / `tool_execution_end`) operate on the streaming progress of the `delegate_to_subagents` tool — they are fire-and-forget and never block the agent.
 
@@ -84,16 +86,16 @@ Contains five module-scope helpers:
 
 The `SubagentChecker` object manages cooldown-gated check scheduling:
 
-| Method / Getter | Description |
-|---|---|
-| `runChecksAndPublish()` | Async: resolves git-changed files, runs checks via the daemon, publishes status. Fire-and-forget. |
-| `scheduleCooldownCheck()` | Schedules a check after the remaining cooldown time. Cancels any existing timer. |
-| `markPending()` | Sets the `hasPendingCheck` flag — used to coalesce multiple rapid updates into one check. |
-| `clear()` | Cancels timers, sets the shutdown flag, resets all state. Used during `session_shutdown`. |
-| `reset()` | Calls `clear()` then unsets the shutdown flag. Used during `session_start`. |
-| `lastCheckTime` | Getter — timestamp of the last completed check. |
-| `checkInFlight` | Getter — whether a check is currently running. |
-| `hasPendingCheck` | Getter — whether a check has been deferred by cooldown logic. |
+| Method / Getter           | Description                                                                                       |
+| ------------------------- | ------------------------------------------------------------------------------------------------- |
+| `runChecksAndPublish()`   | Async: resolves git-changed files, runs checks via the daemon, publishes status. Fire-and-forget. |
+| `scheduleCooldownCheck()` | Schedules a check after the remaining cooldown time. Cancels any existing timer.                  |
+| `markPending()`           | Sets the `hasPendingCheck` flag — used to coalesce multiple rapid updates into one check.         |
+| `clear()`                 | Cancels timers, sets the shutdown flag, resets all state. Used during `session_shutdown`.         |
+| `reset()`                 | Calls `clear()` then unsets the shutdown flag. Used during `session_start`.                       |
+| `lastCheckTime`           | Getter — timestamp of the last completed check.                                                   |
+| `checkInFlight`           | Getter — whether a check is currently running.                                                    |
+| `hasPendingCheck`         | Getter — whether a check has been deferred by cooldown logic.                                     |
 
 Imports from: `@harms-haus/code-lens/client` (daemon lifecycle), `config.ts`, `helpers.ts`, `hook-runner.ts`, `renderer.ts`, `types.ts`.
 
@@ -115,14 +117,14 @@ Internal components:
 
 Handles six status types, each with a dedicated theme colour and icon:
 
-| Status | Icon | Theme Key | Label |
-|--------|------|-----------|-------|
-| `clean` | ✅ | `success` | clean |
-| `issues` | ⚠ | `warning` | issues |
-| `error` | ✗ | `error` | error |
-| `skipped` | ⊘ | `dim` | skipped |
-| `running` | ● | `muted` | running |
-| `pending` | ● | `muted` | pending |
+| Status    | Icon | Theme Key | Label   |
+| --------- | ---- | --------- | ------- |
+| `clean`   | ✅   | `success` | clean   |
+| `issues`  | ⚠    | `warning` | issues  |
+| `error`   | ✗    | `error`   | error   |
+| `skipped` | ⊘    | `dim`     | skipped |
+| `running` | ●    | `muted`   | running |
+| `pending` | ●    | `muted`   | pending |
 
 **Never throws** — the entire `renderLensDiagnostics` body is wrapped in a try/catch that returns a safe fallback panel on any error.
 
@@ -350,9 +352,9 @@ All check execution state (linter detection, tool availability, LSP server insta
 Beyond `LensState`, `index.ts` maintains three module-level variables:
 
 ```typescript
-let currentCtx: ExtensionContext | undefined;   // Current session context
-let lastStatus: string | undefined;             // Last published status JSON (for dedup)
-let rendererEnabled: boolean = false;            // Whether TUI diagnostic messages are enabled
+let currentCtx: ExtensionContext | undefined; // Current session context
+let lastStatus: string | undefined; // Last published status JSON (for dedup)
+let rendererEnabled: boolean = false; // Whether TUI diagnostic messages are enabled
 ```
 
 **`rendererEnabled`** is set from `loadRendererSetting()` during `session_start` (reads the `piLensRenderer` boolean from `~/.pi/agent/settings.json`). It is reset to `false` during `session_shutdown`. When `true`, both the `tool_result` handler and the subagent checker's `runChecksAndPublish()` call `sendDiagnosticMessage()` after each check to send a structured `LensDiagnosticDetails` payload to the TUI. When `false`, diagnostic messages are not sent and only the plain-text appendage to the tool result is produced (for LLM consumption).
@@ -369,11 +371,11 @@ The `createSubagentChecker` factory encapsulates all subagent monitoring state i
 
 ```typescript
 // Encapsulated within createSubagentChecker closure:
-let lastCheckTime: number = 0;              // Timestamp of last completed check
-let checkInFlight: boolean = false;          // Whether a daemon request is active
-let pendingTimer: setTimeout | undefined;    // Cooldown timer handle
-let hasPendingCheck: boolean = false;        // Coalescing flag for rapid updates
-let shutdown: boolean = false;               // Prevents post-shutdown execution
+let lastCheckTime: number = 0; // Timestamp of last completed check
+let checkInFlight: boolean = false; // Whether a daemon request is active
+let pendingTimer: setTimeout | undefined; // Cooldown timer handle
+let hasPendingCheck: boolean = false; // Coalescing flag for rapid updates
+let shutdown: boolean = false; // Prevents post-shutdown execution
 ```
 
 The **`shutdown` flag** is critical for correctness across async boundaries. When `clear()` is called during `session_shutdown`, it sets `shutdown = true`. Any in-flight `runChecksAndPublish()` call checks this flag after each `await` point and exits early if set. This prevents stale daemon requests from publishing status to a destroyed session context.
@@ -384,12 +386,12 @@ The factory is **reset** (not recreated) on each `session_start` via `checker.re
 
 The daemon caches the following across `fullCheck` requests (invalidated on cwd change):
 
-| Cache | Type | Populated By |
-|---|---|---|
-| `cachedLinters` | `DetectedLinter[]` | `detectLinters(cwd)` |
-| `cachedPrettierAvailable` | `boolean` | `isPrettierAvailable(cwd)` |
-| `cachedTscAvailable` | `boolean` | `isTscAvailable(cwd)` |
-| LSP server instances | `LspManager` | Maintained across requests with idle-timeout eviction |
+| Cache                     | Type               | Populated By                                          |
+| ------------------------- | ------------------ | ----------------------------------------------------- |
+| `cachedLinters`           | `DetectedLinter[]` | `detectLinters(cwd)`                                  |
+| `cachedPrettierAvailable` | `boolean`          | `isPrettierAvailable(cwd)`                            |
+| `cachedTscAvailable`      | `boolean`          | `isTscAvailable(cwd)`                                 |
+| LSP server instances      | `LspManager`       | Maintained across requests with idle-timeout eviction |
 
 This means the first `fullCheck` request pays the detection cost, but subsequent requests reuse cached results. The daemon remains warm as long as the session is active.
 
@@ -495,20 +497,20 @@ This ensures pi-lens is purely advisory — it can never break the agent's prima
 
 ### Supported Patterns
 
-| Pattern | Detection | Files Reported |
-|---------|-----------|----------------|
-| `sed -i 's/old/new/g' file` | `sed` with `-i` flag | Written: `file` |
-| `sed 's/old/new/g' in > out` | `sed` with redirect | Written: `out` |
-| `cat > file << EOF` | `cat` with redirect | Written: `file` |
-| `echo "text" > file` | `echo`/`printf` with redirect | Written: `file` |
-| `tee file` | `tee` command | Written: `file` |
-| `perl -i -pe '...' file` | `perl` with `-i` flag | Written: `file` |
-| `awk '{print}' in > out` | `awk` with redirect | Written: `out` |
-| `python -c "..." > file` | `python` with redirect | Written: `file` |
-| `dd of=file` | `dd` with `of=` | Written: `file` |
-| `mv src dst` | `mv` command | Written: `dst`, Read: `src` |
-| `cp src dst` | `cp` command | Written: `dst`, Read: `src` |
-| `> file` / `>> file` | Generic redirect (fallback) | Written: `file` |
+| Pattern                      | Detection                     | Files Reported              |
+| ---------------------------- | ----------------------------- | --------------------------- |
+| `sed -i 's/old/new/g' file`  | `sed` with `-i` flag          | Written: `file`             |
+| `sed 's/old/new/g' in > out` | `sed` with redirect           | Written: `out`              |
+| `cat > file << EOF`          | `cat` with redirect           | Written: `file`             |
+| `echo "text" > file`         | `echo`/`printf` with redirect | Written: `file`             |
+| `tee file`                   | `tee` command                 | Written: `file`             |
+| `perl -i -pe '...' file`     | `perl` with `-i` flag         | Written: `file`             |
+| `awk '{print}' in > out`     | `awk` with redirect           | Written: `out`              |
+| `python -c "..." > file`     | `python` with redirect        | Written: `file`             |
+| `dd of=file`                 | `dd` with `of=`               | Written: `file`             |
+| `mv src dst`                 | `mv` command                  | Written: `dst`, Read: `src` |
+| `cp src dst`                 | `cp` command                  | Written: `dst`, Read: `src` |
+| `> file` / `>> file`         | Generic redirect (fallback)   | Written: `file`             |
 
 ### Multi-Command Handling
 
@@ -523,6 +525,7 @@ Produces: `written: [a.txt, b.txt]`
 ### Limitations
 
 This is best-effort detection. It cannot handle:
+
 - Arbitrary shell functions or aliases
 - Complex variable expansion (`echo > $OUTFILE`)
 - Commands inside subshells or eval strings

@@ -22,16 +22,16 @@ hook-runner.runChecks()        ←──  statuses + sections
 
 ## Where to Make Changes
 
-| Change | Location | Repo |
-|--------|----------|------|
-| Check execution logic | `src/commands/fullCheck.ts` | `code-lens-cli` |
-| Standalone daemon command | `src/commands/<name>.ts` | `code-lens-cli` |
-| Command registration | `src/server.ts` (side-effect import) | `code-lens-cli` |
-| Check runner / availability detection | `src/linting/<name>-runner.ts` | `code-lens-cli` |
-| Config option (enable/disable) | `src/types.ts` + `src/config.ts` | `pi-lens` |
-| Status bar payload | `src/types.ts` (LensStatusPayload) | `pi-lens` |
-| Hook check statuses | `src/hook-runner.ts` (HookCheckStatuses) | `pi-lens` |
-| Unit tests | `src/__tests__/` | `code-lens-cli` |
+| Change                                | Location                                 | Repo            |
+| ------------------------------------- | ---------------------------------------- | --------------- |
+| Check execution logic                 | `src/commands/fullCheck.ts`              | `code-lens-cli` |
+| Standalone daemon command             | `src/commands/<name>.ts`                 | `code-lens-cli` |
+| Command registration                  | `src/server.ts` (side-effect import)     | `code-lens-cli` |
+| Check runner / availability detection | `src/linting/<name>-runner.ts`           | `code-lens-cli` |
+| Config option (enable/disable)        | `src/types.ts` + `src/config.ts`         | `pi-lens`       |
+| Status bar payload                    | `src/types.ts` (LensStatusPayload)       | `pi-lens`       |
+| Hook check statuses                   | `src/hook-runner.ts` (HookCheckStatuses) | `pi-lens`       |
+| Unit tests                            | `src/__tests__/`                         | `code-lens-cli` |
 
 ---
 
@@ -138,7 +138,7 @@ registerCommand("newcheck", async (params, _manager, cwd) => {
 In `code-lens-cli/src/server.ts`, add a side-effect import so the command's `registerCommand()` call runs at startup:
 
 ```typescript
-import "./commands/newcheck.js";   // Add this line
+import "./commands/newcheck.js"; // Add this line
 ```
 
 ### 1d. Integrate into `fullCheck.ts`
@@ -211,7 +211,7 @@ const [prettierResult, linterResult, lspResult, tscResult, newCheckResult] = awa
   runLinterCheck(safeFiles, cwd, config, cachedLinters!),
   runLspCheck(safeFiles, cwd, config, manager),
   runTscCheck(safeFiles, cwd, config, cachedTscAvailable!),
-  runNewCheckCheck(safeFiles, cwd, config, cachedNewCheckAvailable!),  // Add
+  runNewCheckCheck(safeFiles, cwd, config, cachedNewCheckAvailable!), // Add
 ]);
 
 // Collect results:
@@ -265,15 +265,28 @@ Add to the merge lists in `mergeConfig()`:
 ```typescript
 // Boolean fields
 for (const key of [
-  "prettier", "linters", "lsp", "tsc", "bashDetection", "alwaysReport",
-  "newCheck",  // Add
-] as const) { /* ... */ }
+  "prettier",
+  "linters",
+  "lsp",
+  "tsc",
+  "bashDetection",
+  "alwaysReport",
+  "newCheck", // Add
+] as const) {
+  /* ... */
+}
 
 // Number fields
 for (const key of [
-  "lspDelayMs", "maxConcurrency", "prettierTimeoutMs", "linterTimeoutMs", "tscTimeoutMs",
-  "newCheckTimeoutMs",  // Add
-] as const) { /* ... */ }
+  "lspDelayMs",
+  "maxConcurrency",
+  "prettierTimeoutMs",
+  "linterTimeoutMs",
+  "tscTimeoutMs",
+  "newCheckTimeoutMs", // Add
+] as const) {
+  /* ... */
+}
 ```
 
 ### 2c. Update `HookCheckStatuses` in `src/hook-runner.ts`
@@ -284,7 +297,7 @@ export interface HookCheckStatuses {
   linters: CheckStatus;
   lsp: CheckStatus;
   tsc: CheckStatus;
-  newCheck: CheckStatus;  // Add
+  newCheck: CheckStatus; // Add
 }
 ```
 
@@ -321,7 +334,7 @@ export interface LensStatusPayload {
   linters: CheckStatus;
   lsp: CheckStatus;
   tsc: CheckStatus;
-  newCheck: CheckStatus;  // Add
+  newCheck: CheckStatus; // Add
 }
 ```
 
@@ -346,15 +359,27 @@ vi.mock("../spawn-utils.js", () => ({
 
 describe("newcheck-runner", () => {
   describe("isNewCheckAvailable", () => {
-    it("returns true when tool is installed", async () => { /* ... */ });
-    it("returns false when tool is missing", async () => { /* ... */ });
+    it("returns true when tool is installed", async () => {
+      /* ... */
+    });
+    it("returns false when tool is missing", async () => {
+      /* ... */
+    });
   });
 
   describe("runNewCheck", () => {
-    it("parses clean output", async () => { /* ... */ });
-    it("parses issues from JSON output", async () => { /* ... */ });
-    it("handles execution errors gracefully", async () => { /* ... */ });
-    it("respects AbortSignal", async () => { /* ... */ });
+    it("parses clean output", async () => {
+      /* ... */
+    });
+    it("parses issues from JSON output", async () => {
+      /* ... */
+    });
+    it("handles execution errors gracefully", async () => {
+      /* ... */
+    });
+    it("respects AbortSignal", async () => {
+      /* ... */
+    });
   });
 });
 ```
