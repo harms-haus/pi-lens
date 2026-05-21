@@ -61,8 +61,8 @@ function renderStatusIcon(status: string, theme: Theme): string {
 }
 
 function stripAnsi(text: string): string {
-  // eslint-disable-next-line no-control-regex
   return text.replace(
+    /* eslint-disable-next-line no-control-regex -- ANSI escape sequences must match control characters */
     /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b\][^\x1b]*\x1b[\x5c][^\x20-\x7E\t\r\n]/g,
     "",
   );
