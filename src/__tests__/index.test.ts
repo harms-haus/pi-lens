@@ -754,6 +754,156 @@ describe("tool_execution_update filtering", () => {
   });
 });
 
+// ── hasFileModifyingToolActivity tool-name filtering ───────────────────
+
+describe("hasFileModifyingToolActivity tool-name filtering", () => {
+  function createToolLinePartialResult(toolContent: string) {
+    return {
+      details: {
+        windows: [
+          {
+            lines: [{ kind: "tool", content: toolContent }],
+          },
+        ],
+      },
+    };
+  }
+
+  it("read tool does NOT trigger check", async () => {
+    const { pi, handlers } = createMockPi();
+    extension(pi);
+
+    const handler = handlers.get("tool_execution_update")!;
+    handler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-tool-filter-read",
+      partialResult: createToolLinePartialResult("read file.ts"),
+    });
+
+    expect(pi.exec).not.toHaveBeenCalled();
+    expect(runChecks).not.toHaveBeenCalled();
+  });
+
+  it("grep tool does NOT trigger check", async () => {
+    const { pi, handlers } = createMockPi();
+    extension(pi);
+
+    const handler = handlers.get("tool_execution_update")!;
+    handler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-tool-filter-grep",
+      partialResult: createToolLinePartialResult("grep pattern src/"),
+    });
+
+    expect(pi.exec).not.toHaveBeenCalled();
+    expect(runChecks).not.toHaveBeenCalled();
+  });
+
+  it("find tool does NOT trigger check", async () => {
+    const { pi, handlers } = createMockPi();
+    extension(pi);
+
+    const handler = handlers.get("tool_execution_update")!;
+    handler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-tool-filter-find",
+      partialResult: createToolLinePartialResult("find *.ts"),
+    });
+
+    expect(pi.exec).not.toHaveBeenCalled();
+    expect(runChecks).not.toHaveBeenCalled();
+  });
+
+  it("edit tool SHOULD trigger check", async () => {
+    vi.useFakeTimers();
+    try {
+      const { pi, handlers } = createMockPi();
+      const ctx = createMockContext();
+      extension(pi);
+
+      const startHandler = handlers.get("session_start")!;
+      await startHandler({ type: "session_start", reason: "startup" }, ctx);
+
+      vi.mocked(pi.exec).mockResolvedValue({
+        code: 0,
+        stdout: "src/foo.ts",
+        stderr: "",
+        killed: false,
+      });
+      vi.mocked(runChecks).mockResolvedValue({
+        text: "clean",
+        statuses: { prettier: "clean", linters: "clean", lsp: "clean", tsc: "clean" },
+        durationMs: 50,
+      });
+
+      const handler = handlers.get("tool_execution_update")!;
+      handler({
+        type: "tool_execution_update",
+        toolName: "delegate_to_subagents",
+        toolCallId: "call-tool-filter-edit",
+        partialResult: createToolLinePartialResult("edit file.ts"),
+      });
+
+      await vi.runAllTimersAsync();
+
+      expect(pi.exec).toHaveBeenCalledWith(
+        "git",
+        ["diff", "--name-only", "HEAD"],
+        expect.objectContaining({ cwd: "/home/user/project", timeout: 5000 }),
+      );
+      expect(runChecks).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bash tool SHOULD trigger check", async () => {
+    vi.useFakeTimers();
+    try {
+      const { pi, handlers } = createMockPi();
+      const ctx = createMockContext();
+      extension(pi);
+
+      const startHandler = handlers.get("session_start")!;
+      await startHandler({ type: "session_start", reason: "startup" }, ctx);
+
+      vi.mocked(pi.exec).mockResolvedValue({
+        code: 0,
+        stdout: "src/foo.ts",
+        stderr: "",
+        killed: false,
+      });
+      vi.mocked(runChecks).mockResolvedValue({
+        text: "clean",
+        statuses: { prettier: "clean", linters: "clean", lsp: "clean", tsc: "clean" },
+        durationMs: 50,
+      });
+
+      const handler = handlers.get("tool_execution_update")!;
+      handler({
+        type: "tool_execution_update",
+        toolName: "delegate_to_subagents",
+        toolCallId: "call-tool-filter-bash",
+        partialResult: createToolLinePartialResult("bash some-command"),
+      });
+
+      await vi.runAllTimersAsync();
+
+      expect(pi.exec).toHaveBeenCalledWith(
+        "git",
+        ["diff", "--name-only", "HEAD"],
+        expect.objectContaining({ cwd: "/home/user/project", timeout: 5000 }),
+      );
+      expect(runChecks).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 // ── tool_execution_update triggers check ─────────────────────────────
 
 describe("tool_execution_update triggers check", () => {
@@ -816,11 +966,23 @@ describe("tool_execution_update triggers check", () => {
     );
   });
 
-  it("triggers check on tool_execution_end for delegate_to_subagents", async () => {
+  it("triggers check on tool_execution_end for delegate_to_subagents after file activity", async () => {
     const { handlers } = await setupSessionAndMocks();
 
-    const handler = handlers.get("tool_execution_end")!;
-    handler({
+    // First, trigger file-modifying activity via tool_execution_update
+    const updateHandler = handlers.get("tool_execution_update")!;
+    updateHandler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-end-setup",
+      partialResult: createToolActivityPartialResult(),
+    });
+    await vi.runAllTimersAsync();
+    vi.mocked(runChecks).mockClear();
+
+    // Now fire tool_execution_end — should trigger check because there was file activity
+    const endHandler = handlers.get("tool_execution_end")!;
+    endHandler({
       type: "tool_execution_end",
       toolName: "delegate_to_subagents",
       toolCallId: "call-end-1",
@@ -829,6 +991,21 @@ describe("tool_execution_update triggers check", () => {
     await vi.runAllTimersAsync();
 
     expect(runChecks).toHaveBeenCalled();
+  });
+
+  it("skips check on tool_execution_end when no file-modifying activity occurred", async () => {
+    const { handlers } = await setupSessionAndMocks();
+
+    const endHandler = handlers.get("tool_execution_end")!;
+    endHandler({
+      type: "tool_execution_end",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-end-no-activity",
+    });
+
+    await vi.runAllTimersAsync();
+
+    expect(runChecks).not.toHaveBeenCalled();
   });
 
   it("ignores tool_execution_end for non-delegate tools", async () => {
@@ -1110,11 +1287,15 @@ describe("cooldown enforcement", () => {
     const startHandler = handlers.get("session_start")!;
     await startHandler({ type: "session_start", reason: "startup" }, ctx);
 
-    vi.mocked(pi.exec).mockResolvedValue({
-      code: 0,
-      stdout: "src/foo.ts",
-      stderr: "",
-      killed: false,
+    let gitCallCount = 0;
+    vi.mocked(pi.exec).mockImplementation(() => {
+      gitCallCount++;
+      return Promise.resolve({
+        code: 0,
+        stdout: gitCallCount === 1 ? "src/foo.ts" : "src/foo.ts\nsrc/bar.ts",
+        stderr: "",
+        killed: false,
+      });
     });
     vi.mocked(runChecks).mockResolvedValue({
       text: "clean",

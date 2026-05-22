@@ -70,7 +70,7 @@ function buildStatusPayload(checkStatuses?: {
 
 const SUBAGENT_CHECK_COOLDOWN_MS = 5000;
 
-function hasToolActivity(partialResult: unknown): boolean {
+function hasFileModifyingToolActivity(partialResult: unknown): boolean {
   if (!isRecord(partialResult)) return false;
   const details = partialResult.details;
   if (!isRecord(details)) return false;
@@ -80,7 +80,12 @@ function hasToolActivity(partialResult: unknown): boolean {
     (w: unknown) =>
       isRecord(w) &&
       Array.isArray(w.lines) &&
-      (w.lines as unknown[]).some((line: unknown) => isRecord(line) && line.kind === "tool"),
+      (w.lines as unknown[]).some((line: unknown) => {
+        if (!isRecord(line) || line.kind !== "tool") return false;
+        if (typeof line.content !== "string") return false;
+        const toolName = line.content.split(/\s+/)[0];
+        return toolName === "write" || toolName === "edit" || toolName === "bash";
+      }),
   );
 }
 
@@ -115,13 +120,17 @@ async function resolveChangedFilesFromGit(pi: ExtensionAPI, cwd: string): Promis
 
 interface SubagentChecker {
   runChecksAndPublish(): Promise<void>;
+  runFinalCheckAndPublish(): Promise<void>;
   scheduleCooldownCheck(): void;
   markPending(): void;
+  markFileActivity(): void;
+  registerCheckedFiles(files: string[]): void;
   clear(): void;
   reset(): void;
   get lastCheckTime(): number;
   get checkInFlight(): boolean;
   get hasPendingCheck(): boolean;
+  get hadFileModifyingActivity(): boolean;
 }
 
 function createSubagentChecker(
@@ -139,78 +148,59 @@ function createSubagentChecker(
   let checkInFlight = false;
   let pendingTimer: ReturnType<typeof setTimeout> | undefined;
   let hasPendingCheck = false;
+  let hadFileModifyingActivity = false;
   let shutdown = false;
+  let previousFiles = new Set<string>();
 
   async function runChecksAndPublish(): Promise<void> {
     checkInFlight = true;
     try {
       const files = await resolveChangedFilesFromGit(pi, state.cwd);
       if (shutdown) return;
-      if (files.length === 0) {
+
+      // Compute only newly changed files not seen in previous checks
+      const newFiles = files.filter((f) => !previousFiles.has(f));
+      for (const f of files) previousFiles.add(f);
+      if (newFiles.length === 0) {
         lastCheckTime = Date.now();
-        if (hasPendingCheck) {
-          hasPendingCheck = false;
-          scheduleCooldownCheck();
-        }
+        if (hasPendingCheck) { hasPendingCheck = false; scheduleCooldownCheck(); }
         return;
       }
 
-      const result = await runChecks(files, state.cwd, state.config);
+      const result = await runChecks(newFiles, state.cwd, state.config);
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- shutdown may be set by clear() across await boundary
       if (shutdown) return;
       publishStatus(result.statuses);
       lastCheckTime = Date.now();
-
       if (rendererEnabled && result.text) {
         const ctx = getContext();
-        if (ctx) {
-          sendDiagnosticMessage(pi, ctx, result, files.length);
-        }
+        if (ctx) sendDiagnosticMessage(pi, ctx, result, newFiles.length);
       }
 
-      if (hasPendingCheck) {
-        hasPendingCheck = false;
-        scheduleCooldownCheck();
-      }
+      if (hasPendingCheck) { hasPendingCheck = false; scheduleCooldownCheck(); }
     } catch {
       if (shutdown) return;
       lastCheckTime = Date.now();
-      if (hasPendingCheck) {
-        hasPendingCheck = false;
-        scheduleCooldownCheck();
-      }
+      if (hasPendingCheck) { hasPendingCheck = false; scheduleCooldownCheck(); }
     } finally {
       checkInFlight = false;
     }
   }
 
   function scheduleCooldownCheck(): void {
-    if (pendingTimer !== undefined) {
-      clearTimeout(pendingTimer);
-      pendingTimer = undefined;
-    }
-
+    if (pendingTimer !== undefined) { clearTimeout(pendingTimer); pendingTimer = undefined; }
     const remaining = Math.max(0, SUBAGENT_CHECK_COOLDOWN_MS - (Date.now() - lastCheckTime));
-
-    pendingTimer = setTimeout(() => {
-      pendingTimer = undefined;
-      void runChecksAndPublish();
-    }, remaining);
+    pendingTimer = setTimeout(() => { pendingTimer = undefined; void runChecksAndPublish(); }, remaining);
   }
 
-  function markPending(): void {
-    hasPendingCheck = true;
-  }
+  function markPending(): void { hasPendingCheck = true; }
+  function markFileActivity(): void { hadFileModifyingActivity = true; }
 
   function clear(): void {
     shutdown = true;
-    if (pendingTimer !== undefined) {
-      clearTimeout(pendingTimer);
-      pendingTimer = undefined;
-    }
-    hasPendingCheck = false;
-    checkInFlight = false;
-    lastCheckTime = 0;
+    if (pendingTimer !== undefined) { clearTimeout(pendingTimer); pendingTimer = undefined; }
+    hasPendingCheck = false; checkInFlight = false;
+    hadFileModifyingActivity = false; lastCheckTime = 0; previousFiles = new Set();
   }
 
   function reset(): void {
@@ -218,21 +208,33 @@ function createSubagentChecker(
     shutdown = false;
   }
 
+  function registerCheckedFiles(files: string[]): void {
+    for (const f of files) previousFiles.add(f);
+  }
+
+  function runFinalCheckAndPublish(): Promise<void> {
+    previousFiles = new Set();
+    if (checkInFlight) {
+      hasPendingCheck = true;
+      scheduleCooldownCheck();
+      return Promise.resolve();
+    }
+    return runChecksAndPublish();
+  }
+
   return {
     runChecksAndPublish,
+    runFinalCheckAndPublish,
     scheduleCooldownCheck,
     markPending,
+    markFileActivity,
+    registerCheckedFiles,
     clear,
     reset,
-    get lastCheckTime() {
-      return lastCheckTime;
-    },
-    get checkInFlight() {
-      return checkInFlight;
-    },
-    get hasPendingCheck() {
-      return hasPendingCheck;
-    },
+    get lastCheckTime() { return lastCheckTime; },
+    get checkInFlight() { return checkInFlight; },
+    get hasPendingCheck() { return hasPendingCheck; },
+    get hadFileModifyingActivity() { return hadFileModifyingActivity; },
   };
 }
 
@@ -332,6 +334,9 @@ export default function (pi: ExtensionAPI): void {
         sendDiagnosticMessage(pi, ctx, result, files.length);
       }
 
+      // Register checked files so the subagent checker skips them
+      checker.registerCheckedFiles(files);
+
       // Always report (even when clean, per config.alwaysReport)
       if (result.text) {
         return {
@@ -350,7 +355,9 @@ export default function (pi: ExtensionAPI): void {
 
   pi.on("tool_execution_update", (event) => {
     if (event.toolName !== "delegate_to_subagents") return undefined;
-    if (!hasToolActivity(event.partialResult)) return undefined;
+    if (!hasFileModifyingToolActivity(event.partialResult)) return undefined;
+
+    checker.markFileActivity();
 
     const cooldownElapsed = Date.now() - checker.lastCheckTime >= SUBAGENT_CHECK_COOLDOWN_MS;
 
@@ -370,7 +377,9 @@ export default function (pi: ExtensionAPI): void {
 
   pi.on("tool_execution_end", (event) => {
     if (event.toolName !== "delegate_to_subagents") return undefined;
-    void checker.runChecksAndPublish();
+    if (checker.hadFileModifyingActivity) {
+      void checker.runFinalCheckAndPublish();
+    }
     return undefined;
   });
 }
