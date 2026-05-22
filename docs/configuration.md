@@ -252,10 +252,10 @@ All fields are optional. Only include the ones you want to override from default
 
 #### `alwaysReport`
 
-| Field           | Value                                                                                                                                                                                                     |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Type**        | `boolean`                                                                                                                                                                                                 |
-| **Default**     | `true`                                                                                                                                                                                                    |
+| Field           | Value                                                                                                                                                                                            |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Type**        | `boolean`                                                                                                                                                                                        |
+| **Default**     | `true`                                                                                                                                                                                           |
 | **Description** | When `true`, pi-lens always displays the summary line in tool output, even when all checks pass cleanly. When `false`, clean results produce no additional output, keeping tool results minimal. |
 
 ```json

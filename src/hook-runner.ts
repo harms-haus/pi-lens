@@ -112,12 +112,19 @@ export function resolveFilesFromToolResult(
  */
 function statusToIcon(status: string): string {
   switch (status) {
-    case "clean": return "✅";
-    case "issues": return "⚠";
-    case "error": return "✗";
-    case "skipped": return "⊘";
-    case "running": case "pending": return "●";
-    default: return "●";
+    case "clean":
+      return "✅";
+    case "issues":
+      return "⚠";
+    case "error":
+      return "✗";
+    case "skipped":
+      return "⊘";
+    case "running":
+    case "pending":
+      return "●";
+    default:
+      return "●";
   }
 }
 

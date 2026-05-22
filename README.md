@@ -6,10 +6,6 @@ Unified code quality extension for [pi](https://github.com/earendil-works/pi-cod
 
 pi-lens hooks after every `write`, `edit`, and `bash` tool call and automatically runs code quality checks on the affected files — prettier, linters, LSP diagnostics, and TypeScript type checking in a single pass. When used with pi-subagents, pi-lens also monitors subagent file edits in real-time, updating status as changes are detected.
 
-
-
-
-
 ## Features
 
 - **Prettier checking (report-only)** — Detects files needing formatting and reports them (does NOT auto-write)
@@ -55,8 +51,6 @@ Or try it temporarily without installing:
 pi -e npm:@harms-haus/pi-lens
 ```
 
-
-
 ## Configuration
 
 pi-lens is configured via a `.pi-lens.json` file in your project root. If no config file exists, all checks are enabled with sensible defaults.
@@ -95,11 +89,12 @@ Enable it by adding the `piLensRenderer` setting to your global pi agent setting
 }
 ```
 
-| Setting | File | Default | Description |
-|---------|------|---------|-------------|
+| Setting          | File                        | Default | Description                                          |
+| ---------------- | --------------------------- | ------- | ---------------------------------------------------- |
 | `piLensRenderer` | `~/.pi/agent/settings.json` | `false` | Show a color-coded TUI diagnostic panel after checks |
 
 When enabled:
+
 - A diagnostic panel appears after every `write`/`edit`/`bash` that triggers checks
 - The panel shows a header (file count, duration, pass/fail) and per-check status lines with color-coded icons
 - Press **Ctrl+E** to expand the panel and see full diagnostic details
@@ -108,6 +103,7 @@ When enabled:
 ### Quick examples
 
 **Disable prettier and tsc, keep linting and LSP:**
+
 ```json
 {
   "prettier": false,
@@ -116,6 +112,7 @@ When enabled:
 ```
 
 **Linting only (disable everything else):**
+
 ```json
 {
   "prettier": false,
@@ -130,19 +127,19 @@ When enabled:
 
 pi-lens (via the code-lens daemon) detects and runs linters automatically. 11 linters are supported across 7 languages:
 
-| Linter | Languages | Config Files | Detection |
-|--------|-----------|-------------|-----------|
-| **ESLint** | JavaScript, TypeScript | `.eslintrc*`, `eslint.config.*` | Config files, `package.json#eslint` |
-| **Biome** | JavaScript, TypeScript | `biome.json` | Config file, `package.json#@biomejs/biome` |
-| **Ruff** | Python | `ruff.toml`, `.ruff.toml`, `pyproject.toml#[tool.ruff]` | Config files, `pyproject.toml` markers |
-| **Flake8** | Python | `.flake8`, `setup.cfg#[flake8]`, `tox.ini#[flake8]` | Config files, Python project markers |
-| **Pylint** | Python | `.pylintrc`, `pyproject.toml#[tool.pylint]` | Config files, Python project markers |
-| **Mypy** | Python | `mypy.ini`, `.mypy.ini`, `pyproject.toml#[tool.mypy]` | Config files, Python project markers |
-| **Clippy** | Rust | `Clippy.toml`, `.clippy.toml` | `Cargo.toml` project marker |
-| **staticcheck** | Go | *(uses Go toolchain)* | `go.mod` project marker |
-| **RuboCop** | Ruby | `.rubocop.yml` | `Gemfile` project marker |
-| **ShellCheck** | Shell | `.shellcheckrc` | Config file (`.shellcheckrc`) |
-| **Stylelint** | CSS, SCSS, Less | `.stylelintrc*`, `stylelint.config.*` | Config files, `package.json#stylelint` |
+| Linter          | Languages              | Config Files                                            | Detection                                  |
+| --------------- | ---------------------- | ------------------------------------------------------- | ------------------------------------------ |
+| **ESLint**      | JavaScript, TypeScript | `.eslintrc*`, `eslint.config.*`                         | Config files, `package.json#eslint`        |
+| **Biome**       | JavaScript, TypeScript | `biome.json`                                            | Config file, `package.json#@biomejs/biome` |
+| **Ruff**        | Python                 | `ruff.toml`, `.ruff.toml`, `pyproject.toml#[tool.ruff]` | Config files, `pyproject.toml` markers     |
+| **Flake8**      | Python                 | `.flake8`, `setup.cfg#[flake8]`, `tox.ini#[flake8]`     | Config files, Python project markers       |
+| **Pylint**      | Python                 | `.pylintrc`, `pyproject.toml#[tool.pylint]`             | Config files, Python project markers       |
+| **Mypy**        | Python                 | `mypy.ini`, `.mypy.ini`, `pyproject.toml#[tool.mypy]`   | Config files, Python project markers       |
+| **Clippy**      | Rust                   | `Clippy.toml`, `.clippy.toml`                           | `Cargo.toml` project marker                |
+| **staticcheck** | Go                     | _(uses Go toolchain)_                                   | `go.mod` project marker                    |
+| **RuboCop**     | Ruby                   | `.rubocop.yml`                                          | `Gemfile` project marker                   |
+| **ShellCheck**  | Shell                  | `.shellcheckrc`                                         | Config file (`.shellcheckrc`)              |
+| **Stylelint**   | CSS, SCSS, Less        | `.stylelintrc*`, `stylelint.config.*`                   | Config files, `package.json#stylelint`     |
 
 ## Supported LSP Servers
 
@@ -150,41 +147,41 @@ pi-lens (via the code-lens daemon) detects and runs linters automatically. 11 li
 
 pi-lens (via the code-lens daemon) queries LSP diagnostics for 33 languages:
 
-| Language | Extensions | Server | Install |
-|----------|-----------|--------|---------|
-| TypeScript/JavaScript | .ts, .tsx, .js, .jsx, .mjs, .cjs | typescript-language-server | `npm install -g typescript-language-server typescript` |
-| Python | .py | pylsp | `pip install python-lsp-server` |
-| Rust | .rs | rust-analyzer | `rustup component add rust-analyzer` |
-| Go | .go | gopls | `go install golang.org/x/tools/gopls@latest` |
-| Java | .java | Eclipse JDT LS | Download from GitHub |
-| C/C++ | .c, .cpp, .cc, .cxx, .h, .hpp, .hxx | clangd | `apt install clangd` |
-| C# | .cs | OmniSharp | `dotnet tool install -g omnisharp` |
-| PHP | .php | intelephense | `npm install -g intelephense` |
-| Ruby | .rb | ruby-lsp | `gem install ruby-lsp` |
-| Lua | .lua | lua-language-server | `npm install -g lua-language-server` |
-| HTML | .html, .htm | html-languageserver | `npm install -g vscode-html-languageserver-bin` |
-| CSS/SCSS/LESS | .css, .scss, .less | css-languageserver | `npm install -g vscode-css-languageserver-bin` |
-| JSON | .json, .jsonc | json-languageserver | `npm install -g vscode-json-languageserver-bin` |
-| YAML | .yaml, .yml | yaml-language-server | `npm install -g yaml-language-server` |
-| Markdown | .md | markdown-language-server | `npm install -g vscode-markdown-languageserver` |
-| Dart | .dart | dart language-server | Install Dart SDK |
-| Kotlin | .kt, .kts | kotlin-language-server | Download from GitHub |
-| Swift | .swift | sourcekit-lsp | Included with Swift >= 5.6 |
-| Zig | .zig | zls | Download from GitHub |
-| Haskell | .hs, .lhs | haskell-language-server | `ghcup install hls` |
-| OCaml | .ml, .mli | ocamllsp | `opam install ocaml-lsp-server` |
-| Elixir | .ex, .exs | elixir-ls | Download from GitHub |
-| Scala | .scala, .sbt | metals | `cs install metals` |
-| Terraform/HCL | .tf, .tfvars, .hcl | terraform-ls | Download from GitHub |
-| Dockerfile | Dockerfile, .dockerfile | dockerfile-language-server-nodejs | `npm install -g dockerfile-language-server-nodejs` |
-| SQL | .sql | sql-language-server | `npm install -g sql-language-server` |
-| Vue | .vue | vue-language-server | `npm install -g @vue/language-server` |
-| Svelte | .svelte | svelteserver | `npm install -g svelte-language-server` |
-| TOML | .toml | taplo | `npm install -g @taplo/lsp` |
-| Nix | .nix | nil | `nix profile install nixpkgs#nil` |
-| LaTeX | .tex, .latex | texlab | `cargo install texlab` |
-| R | .r, .R | languageserver | `R -e 'install.packages("languageserver")'` |
-| Bash/Shell | .sh, .bash | bash-language-server | `npm install -g bash-language-server` |
+| Language              | Extensions                          | Server                            | Install                                                |
+| --------------------- | ----------------------------------- | --------------------------------- | ------------------------------------------------------ |
+| TypeScript/JavaScript | .ts, .tsx, .js, .jsx, .mjs, .cjs    | typescript-language-server        | `npm install -g typescript-language-server typescript` |
+| Python                | .py                                 | pylsp                             | `pip install python-lsp-server`                        |
+| Rust                  | .rs                                 | rust-analyzer                     | `rustup component add rust-analyzer`                   |
+| Go                    | .go                                 | gopls                             | `go install golang.org/x/tools/gopls@latest`           |
+| Java                  | .java                               | Eclipse JDT LS                    | Download from GitHub                                   |
+| C/C++                 | .c, .cpp, .cc, .cxx, .h, .hpp, .hxx | clangd                            | `apt install clangd`                                   |
+| C#                    | .cs                                 | OmniSharp                         | `dotnet tool install -g omnisharp`                     |
+| PHP                   | .php                                | intelephense                      | `npm install -g intelephense`                          |
+| Ruby                  | .rb                                 | ruby-lsp                          | `gem install ruby-lsp`                                 |
+| Lua                   | .lua                                | lua-language-server               | `npm install -g lua-language-server`                   |
+| HTML                  | .html, .htm                         | html-languageserver               | `npm install -g vscode-html-languageserver-bin`        |
+| CSS/SCSS/LESS         | .css, .scss, .less                  | css-languageserver                | `npm install -g vscode-css-languageserver-bin`         |
+| JSON                  | .json, .jsonc                       | json-languageserver               | `npm install -g vscode-json-languageserver-bin`        |
+| YAML                  | .yaml, .yml                         | yaml-language-server              | `npm install -g yaml-language-server`                  |
+| Markdown              | .md                                 | markdown-language-server          | `npm install -g vscode-markdown-languageserver`        |
+| Dart                  | .dart                               | dart language-server              | Install Dart SDK                                       |
+| Kotlin                | .kt, .kts                           | kotlin-language-server            | Download from GitHub                                   |
+| Swift                 | .swift                              | sourcekit-lsp                     | Included with Swift >= 5.6                             |
+| Zig                   | .zig                                | zls                               | Download from GitHub                                   |
+| Haskell               | .hs, .lhs                           | haskell-language-server           | `ghcup install hls`                                    |
+| OCaml                 | .ml, .mli                           | ocamllsp                          | `opam install ocaml-lsp-server`                        |
+| Elixir                | .ex, .exs                           | elixir-ls                         | Download from GitHub                                   |
+| Scala                 | .scala, .sbt                        | metals                            | `cs install metals`                                    |
+| Terraform/HCL         | .tf, .tfvars, .hcl                  | terraform-ls                      | Download from GitHub                                   |
+| Dockerfile            | Dockerfile, .dockerfile             | dockerfile-language-server-nodejs | `npm install -g dockerfile-language-server-nodejs`     |
+| SQL                   | .sql                                | sql-language-server               | `npm install -g sql-language-server`                   |
+| Vue                   | .vue                                | vue-language-server               | `npm install -g @vue/language-server`                  |
+| Svelte                | .svelte                             | svelteserver                      | `npm install -g svelte-language-server`                |
+| TOML                  | .toml                               | taplo                             | `npm install -g @taplo/lsp`                            |
+| Nix                   | .nix                                | nil                               | `nix profile install nixpkgs#nil`                      |
+| LaTeX                 | .tex, .latex                        | texlab                            | `cargo install texlab`                                 |
+| R                     | .r, .R                              | languageserver                    | `R -e 'install.packages("languageserver")'`            |
+| Bash/Shell            | .sh, .bash                          | bash-language-server              | `npm install -g bash-language-server`                  |
 
 ## How It Works
 
@@ -276,16 +273,19 @@ When all checks pass:
 When the `piLensRenderer` setting is enabled, checks also produce a color-coded panel in the TUI:
 
 **All checks clean:**
+
 ```
 🔍 pi-lens: 1 file(s) (234ms) - ✅ prettier • ✅ linters • ✅ lsp • ✅ tsc  (green)
 ```
 
 **Issues found:**
+
 ```
 🔍 pi-lens: 1 file(s) (1200ms) - ✅ prettier • ⚠ linters • ✅ lsp • ✅ tsc  (yellow)
 ```
 
 **With errors and skipped checks:**
+
 ```
 🔍 pi-lens: 2 file(s) (890ms) - ✗ prettier • ⚠ linters • ✅ lsp • ⊘ tsc  (yellow)
 ```
@@ -296,12 +296,12 @@ Press **Ctrl+E** to expand any panel and view the full diagnostic output (lint m
 
 pi-lens publishes a unified status bar payload with an aggregate `CheckStatus` per check category. Each category reports one of: `pending`, `running`, `clean`, `issues`, `error`, or `skipped`.
 
-| Category  | Description |
-|-----------|-------------|
-| **prettier** | Aggregate formatting check status (`skipped` if prettier unavailable) |
+| Category     | Description                                                                      |
+| ------------ | -------------------------------------------------------------------------------- |
+| **prettier** | Aggregate formatting check status (`skipped` if prettier unavailable)            |
 | **linters**  | Aggregate linter status across all detected linters (`skipped` if none detected) |
-| **lsp**      | Aggregate LSP diagnostic status across all language servers |
-| **tsc**      | Aggregate TypeScript type-check status (`skipped` if tsc unavailable) |
+| **lsp**      | Aggregate LSP diagnostic status across all language servers                      |
+| **tsc**      | Aggregate TypeScript type-check status (`skipped` if tsc unavailable)            |
 
 The status bar updates after session start and after every check run. Identical payloads are deduplicated to avoid redundant UI updates.
 

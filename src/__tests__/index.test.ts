@@ -345,7 +345,10 @@ describe("tool_result hook", () => {
     expect(result).toEqual({
       content: [
         { type: "text", text: "File written" },
-        { type: "text", text: "🔍 pi-lens: 1 file(s) (100ms) - ✅ prettier • ⊘ linters • ⊘ lsp • ⊘ tsc" },
+        {
+          type: "text",
+          text: "🔍 pi-lens: 1 file(s) (100ms) - ✅ prettier • ⊘ linters • ⊘ lsp • ⊘ tsc",
+        },
       ],
     });
   });

@@ -17,11 +17,11 @@ We welcome contributions in all forms: bug reports, hook behavior improvements, 
 
 ## Prerequisites
 
-| Requirement | Version | Purpose |
-|-------------|---------|---------|
-| **Node.js** | >= 20 | Runtime for pi and the extension |
-| **npm** | latest (bundled with Node.js) | Package management |
-| **pi dev environment** *(optional)* | — | Integration testing with the actual pi agent |
+| Requirement                         | Version                       | Purpose                                      |
+| ----------------------------------- | ----------------------------- | -------------------------------------------- |
+| **Node.js**                         | >= 20                         | Runtime for pi and the extension             |
+| **npm**                             | latest (bundled with Node.js) | Package management                           |
+| **pi dev environment** _(optional)_ | —                             | Integration testing with the actual pi agent |
 
 No build toolchain (webpack, esbuild, etc.) is required. TypeScript is loaded at runtime.
 
@@ -63,16 +63,16 @@ Changes to pi-lens itself typically involve hook behavior, file resolution, conf
 
 ### npm Scripts
 
-| Script | Command | Description |
-|--------|---------|-------------|
-| `test` | `vitest run` | Run all tests once |
-| `test:watch` | `vitest` | Run tests in watch mode |
-| `test:coverage` | `vitest run --coverage` | Run tests with coverage report |
-| `lint` | `eslint src/` | Run ESLint 9 on all source files |
-| `lint:fix` | `eslint --fix src/` | Run ESLint with auto-fix |
-| `typecheck` | `tsc --noEmit` | Type-check without emitting files |
-| `format` | `prettier --write src/` | Format source files in place |
-| `format:check` | `prettier --check src/` | Check formatting without modifying files |
+| Script          | Command                 | Description                              |
+| --------------- | ----------------------- | ---------------------------------------- |
+| `test`          | `vitest run`            | Run all tests once                       |
+| `test:watch`    | `vitest`                | Run tests in watch mode                  |
+| `test:coverage` | `vitest run --coverage` | Run tests with coverage report           |
+| `lint`          | `eslint src/`           | Run ESLint 9 on all source files         |
+| `lint:fix`      | `eslint --fix src/`     | Run ESLint with auto-fix                 |
+| `typecheck`     | `tsc --noEmit`          | Type-check without emitting files        |
+| `format`        | `prettier --write src/` | Format source files in place             |
+| `format:check`  | `prettier --check src/` | Check formatting without modifying files |
 
 ### Pre-PR Checklist
 
@@ -193,14 +193,14 @@ const mockedExistsSync = vi.mocked(fs.existsSync);
 
 ### Test Coverage by Module
 
-| Test File | Source Module | Focus |
-|-----------|--------------|-------|
-| `index.test.ts` | `index.ts` | Session lifecycle, daemon start/stop, hook registration, status bar updates |
-| `config.test.ts` | `config.ts` | Config loading, defaults, malformed JSON, unknown keys |
-| `hook-runner.test.ts` | `hook-runner.ts` | File resolution, daemon communication, glob filtering, error handling |
-| `bash-file-detector.test.ts` | `bash-file-detector.ts` | Command analysis patterns, edge cases, limitations |
-| `renderer.test.ts` | `renderer.ts` | All status types (clean/issues/error/skipped/running/pending), expanded/collapsed view, missing details, unknown status fallback |
-| `helpers.test.ts` | `helpers.ts` | Type guard behaviour |
+| Test File                    | Source Module           | Focus                                                                                                                            |
+| ---------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `index.test.ts`              | `index.ts`              | Session lifecycle, daemon start/stop, hook registration, status bar updates                                                      |
+| `config.test.ts`             | `config.ts`             | Config loading, defaults, malformed JSON, unknown keys                                                                           |
+| `hook-runner.test.ts`        | `hook-runner.ts`        | File resolution, daemon communication, glob filtering, error handling                                                            |
+| `bash-file-detector.test.ts` | `bash-file-detector.ts` | Command analysis patterns, edge cases, limitations                                                                               |
+| `renderer.test.ts`           | `renderer.ts`           | All status types (clean/issues/error/skipped/running/pending), expanded/collapsed view, missing details, unknown status fallback |
+| `helpers.test.ts`            | `helpers.ts`            | Type guard behaviour                                                                                                             |
 
 ## Pull Request Guidelines
 
