@@ -19,10 +19,11 @@ vi.mock("@harms-haus/code-lens/client", () => ({
 import {
   resolveFilesFromToolResult,
   runChecks,
-  formatCleanMessage,
+  formatSummaryLine,
   filterFilesByPatterns,
 } from "../hook-runner.js";
 import type { LensConfig } from "../types.js";
+import type { HookCheckStatuses } from "../hook-runner.js";
 import { detectFilesFromBashCommand } from "../bash-file-detector.js";
 import { sendRequest, getSocketPath } from "@harms-haus/code-lens/client";
 
@@ -208,7 +209,8 @@ describe("runChecks", () => {
     mockFullCheckResponse({});
 
     const result = await runChecks(["/home/user/project/src/foo.ts"], CWD, baseConfig);
-    expect(result.text).toContain("all clean");
+    expect(result.text).toContain("pi-lens");
+    expect(result.text).toContain("⊘ prettier");
     expect(result.statuses.prettier).toBe("skipped");
     expect(result.statuses.linters).toBe("skipped");
     expect(result.statuses.lsp).toBe("skipped");
@@ -413,7 +415,8 @@ describe("parseDaemonResponse edge cases (via runChecks)", () => {
     });
     const result = await runChecks(["/home/user/project/src/foo.ts"], CWD, baseConfig);
     // hasIssues is not boolean true → treated as false
-    expect(result.text).toContain("all clean");
+    expect(result.text).toContain("pi-lens");
+    expect(result.text).toContain("✅ prettier");
   });
 
   it("handles response with invalid status values", async () => {
@@ -446,17 +449,35 @@ describe("parseDaemonResponse edge cases (via runChecks)", () => {
   });
 });
 
-// ── formatCleanMessage ──────────────────────────────────────────────
+// ── formatSummaryLine ──────────────────────────────────────────────
 
-describe("formatCleanMessage", () => {
-  it("formats clean message correctly", () => {
-    const msg = formatCleanMessage(3, 234);
-    expect(msg).toBe("🔍 pi-lens: 3 file(s) checked — all clean (234ms)");
+describe("formatSummaryLine", () => {
+  const allSkipped: HookCheckStatuses = {
+    prettier: "skipped",
+    linters: "skipped",
+    lsp: "skipped",
+    tsc: "skipped",
+  };
+
+  it("formats summary line with all skipped", () => {
+    const msg = formatSummaryLine(3, 234, allSkipped);
+    expect(msg).toBe("🔍 pi-lens: 3 file(s) (234ms) - ⊘ prettier • ⊘ linters • ⊘ lsp • ⊘ tsc");
+  });
+
+  it("formats with mixed statuses", () => {
+    const statuses: HookCheckStatuses = {
+      prettier: "clean",
+      linters: "issues",
+      lsp: "skipped",
+      tsc: "error",
+    };
+    const msg = formatSummaryLine(1, 100, statuses);
+    expect(msg).toBe("🔍 pi-lens: 1 file(s) (100ms) - ✅ prettier • ⚠ linters • ⊘ lsp • ✗ tsc");
   });
 
   it("formats with 0 files", () => {
-    const msg = formatCleanMessage(0, 0);
-    expect(msg).toBe("🔍 pi-lens: 0 file(s) checked — all clean (0ms)");
+    const msg = formatSummaryLine(0, 0, allSkipped);
+    expect(msg).toBe("🔍 pi-lens: 0 file(s) (0ms) - ⊘ prettier • ⊘ linters • ⊘ lsp • ⊘ tsc");
   });
 });
 

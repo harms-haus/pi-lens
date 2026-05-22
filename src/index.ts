@@ -39,7 +39,7 @@ function sendDiagnosticMessage(
         hasIssues: result.text.includes("⚠") || result.text.includes("✗"),
         fileCount,
         durationMs: result.durationMs,
-        sectionsText: result.text,
+        sectionsText: result.text.includes('\n') ? result.text.slice(result.text.indexOf('\n') + 1) : undefined,
       } satisfies LensDiagnosticDetails,
     });
   } catch (e) {

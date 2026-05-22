@@ -313,7 +313,7 @@ describe("tool_result hook", () => {
 
     vi.mocked(resolveFilesFromToolResult).mockReturnValue(["/home/user/project/src/foo.ts"]);
     vi.mocked(runChecks).mockResolvedValue({
-      text: "🔍 pi-lens: 1 file(s) checked — all clean (100ms)",
+      text: "🔍 pi-lens: 1 file(s) (100ms) - ✅ prettier • ⊘ linters • ⊘ lsp • ⊘ tsc",
       statuses: {
         prettier: "clean",
         linters: "skipped",
@@ -345,7 +345,7 @@ describe("tool_result hook", () => {
     expect(result).toEqual({
       content: [
         { type: "text", text: "File written" },
-        { type: "text", text: "🔍 pi-lens: 1 file(s) checked — all clean (100ms)" },
+        { type: "text", text: "🔍 pi-lens: 1 file(s) (100ms) - ✅ prettier • ⊘ linters • ⊘ lsp • ⊘ tsc" },
       ],
     });
   });
@@ -360,7 +360,7 @@ describe("tool_result hook", () => {
 
     vi.mocked(resolveFilesFromToolResult).mockReturnValue(["/home/user/project/src/foo.ts"]);
     vi.mocked(runChecks).mockResolvedValue({
-      text: "🔍 pi-lens: 1 file(s) checked — all clean (50ms)",
+      text: "🔍 pi-lens: 1 file(s) (50ms) - ✅ prettier • ⊘ linters • ⊘ lsp • ⊘ tsc",
       statuses: { prettier: "clean", linters: "skipped", lsp: "skipped", tsc: "skipped" },
       durationMs: 50,
     });
@@ -396,7 +396,7 @@ describe("tool_result hook", () => {
 
     vi.mocked(resolveFilesFromToolResult).mockReturnValue(["/home/user/project/output.txt"]);
     vi.mocked(runChecks).mockResolvedValue({
-      text: "🔍 pi-lens: 1 file(s) checked — all clean (30ms)",
+      text: "🔍 pi-lens: 1 file(s) (30ms) - ✅ prettier • ⊘ linters • ⊘ lsp • ⊘ tsc",
       statuses: { prettier: "clean", linters: "skipped", lsp: "skipped", tsc: "skipped" },
       durationMs: 30,
     });
@@ -598,7 +598,7 @@ describe("tool_result hook", () => {
 
     vi.mocked(resolveFilesFromToolResult).mockReturnValue(["/home/user/project/src/foo.ts"]);
     vi.mocked(runChecks).mockResolvedValue({
-      text: "issues found",
+      text: "🔍 pi-lens: 1 file(s) (100ms) - ✅ prettier • ✅ linters • ✅ lsp • ⚠ tsc",
       statuses: {
         prettier: "clean",
         linters: "clean",

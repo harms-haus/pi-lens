@@ -42,21 +42,21 @@ type Theme = {
   bg: (color: string, text: string) => string;
 };
 
-function renderStatusIcon(status: string, theme: Theme): string {
+function renderStatusIcon(status: string): string {
   switch (status) {
     case "clean":
-      return theme.fg("success", "✅");
+      return "✅";
     case "issues":
-      return theme.fg("warning", "⚠");
+      return "⚠";
     case "error":
-      return theme.fg("error", "✗");
+      return "✗";
     case "skipped":
-      return theme.fg("dim", "⊘");
+      return "⊘";
     case "running":
     case "pending":
-      return theme.fg("muted", "●");
+      return "●";
     default:
-      return theme.fg("muted", "●");
+      return "●";
   }
 }
 
@@ -66,25 +66,6 @@ function stripAnsi(text: string): string {
     /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b\][^\x1b]*\x1b[\x5c][^\x20-\x7E\t\r\n]/g,
     "",
   );
-}
-
-function renderStatusLabel(status: string, theme: Theme): string {
-  switch (status) {
-    case "clean":
-      return theme.fg("success", "clean");
-    case "issues":
-      return theme.fg("warning", "issues");
-    case "error":
-      return theme.fg("error", "error");
-    case "skipped":
-      return theme.fg("dim", "skipped");
-    case "running":
-      return theme.fg("muted", "running");
-    case "pending":
-      return theme.fg("muted", "pending");
-    default:
-      return theme.fg("muted", status);
-  }
 }
 
 // ── Public renderer ────────────────────────────────────────────────────
@@ -103,35 +84,26 @@ export function renderLensDiagnostics(
       return new DiagnosticPanel(lines);
     }
 
-    // ── Header line ─────────────────────────────────────────────────
+    // ── Summary line ───────────────────────────────────────────────
+    const checks = [
+      { key: "prettier", label: "prettier" },
+      { key: "linters", label: "linters" },
+      { key: "lsp", label: "lsp" },
+      { key: "tsc", label: "tsc" },
+    ] as const;
+
+    const checkParts = checks.map((check) => {
+      const status = details.statuses[check.key];
+      const icon = renderStatusIcon(status);
+      return `${icon} ${check.label}`;
+    });
+
+    const summaryLine = `🔍 pi-lens: ${details.fileCount} file(s) (${details.durationMs}ms) - ${checkParts.join(" • ")}`;
+
     if (details.hasIssues) {
-      lines.push(
-        theme.fg(
-          "warning",
-          `🔍 pi-lens: ${details.fileCount} file(s) checked — issues found (${details.durationMs}ms)`,
-        ),
-      );
+      lines.push(theme.fg("warning", summaryLine));
     } else {
-      lines.push(
-        theme.fg(
-          "success",
-          `🔍 pi-lens: ${details.fileCount} file(s) checked — all clean (${details.durationMs}ms)`,
-        ),
-      );
-    }
-
-    // ── Status lines ────────────────────────────────────────────────
-    const checks: Array<{ label: string; status: string }> = [
-      { label: "prettier", status: details.statuses.prettier },
-      { label: "linters", status: details.statuses.linters },
-      { label: "lsp", status: details.statuses.lsp },
-      { label: "tsc", status: details.statuses.tsc },
-    ];
-
-    for (const check of checks) {
-      const icon = renderStatusIcon(check.status, theme);
-      const statusLabel = renderStatusLabel(check.status, theme);
-      lines.push(`  ${icon} ${check.label}: ${statusLabel}`);
+      lines.push(theme.fg("success", summaryLine));
     }
 
     // ── Expanded detail text ────────────────────────────────────────

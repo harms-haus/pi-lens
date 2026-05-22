@@ -108,10 +108,34 @@ export function resolveFilesFromToolResult(
 // ── Formatting ──────────────────────────────────────────────────────────────
 
 /**
- * Format a clean result message (all checks passed).
+ * Map a check status to a unicode icon.
  */
-export function formatCleanMessage(fileCount: number, durationMs: number): string {
-  return `🔍 pi-lens: ${fileCount} file(s) checked — all clean (${durationMs}ms)`;
+function statusToIcon(status: string): string {
+  switch (status) {
+    case "clean": return "✅";
+    case "issues": return "⚠";
+    case "error": return "✗";
+    case "skipped": return "⊘";
+    case "running": case "pending": return "●";
+    default: return "●";
+  }
+}
+
+/**
+ * Format a single-line summary of all check statuses.
+ */
+export function formatSummaryLine(
+  fileCount: number,
+  durationMs: number,
+  statuses: HookCheckStatuses,
+): string {
+  const parts = [
+    `${statusToIcon(statuses.prettier)} prettier`,
+    `${statusToIcon(statuses.linters)} linters`,
+    `${statusToIcon(statuses.lsp)} lsp`,
+    `${statusToIcon(statuses.tsc)} tsc`,
+  ];
+  return `🔍 pi-lens: ${fileCount} file(s) (${durationMs}ms) - ${parts.join(" • ")}`;
 }
 
 // ── Daemon Communication ────────────────────────────────────────────────────
@@ -238,6 +262,7 @@ export async function runChecks(
       parsed.hasIssues,
       config.alwaysReport,
       parsed.sectionsText,
+      parsed.statuses,
     );
 
     return { text, statuses: parsed.statuses, durationMs };
@@ -256,13 +281,13 @@ function buildResultText(
   hasIssues: boolean,
   alwaysReport: boolean,
   sectionsText: string,
+  statuses: HookCheckStatuses,
 ): string {
   if (!hasIssues && alwaysReport) {
-    return formatCleanMessage(fileCount, durationMs);
+    return formatSummaryLine(fileCount, durationMs, statuses);
   }
   if (hasIssues) {
-    const header = `🔍 pi-lens: ${fileCount} file(s) checked (${durationMs}ms)`;
-    return `${header}\n${sectionsText}`;
+    return `${formatSummaryLine(fileCount, durationMs, statuses)}\n${sectionsText}`;
   }
   return "";
 }

@@ -258,19 +258,17 @@ All checks are executed by the `@harms-haus/code-lens` daemon, not by pi-lens it
 After editing a TypeScript file with issues:
 
 ```
-🔍 pi-lens: 1 file(s) checked (234ms)
+🔍 pi-lens: 1 file(s) (234ms) - ⚠ prettier • ⚠ linters • ✅ lsp • ✅ tsc
   ⚠ prettier: 1 file(s) need formatting
     src/utils.ts
   ⚠ Lint Results: 2 warning(s) in 1 file(s)
  ⚠ src/utils.ts:15:7: Unexpected var, use let or const instead (no-var) [eslint]
-  ✅ lsp: 0 diagnostics
-  ✅ tsc: 0 errors
 ```
 
 When all checks pass:
 
 ```
-🔍 pi-lens: 1 file(s) checked — all clean (89ms)
+🔍 pi-lens: 1 file(s) (89ms) - ✅ prettier • ✅ linters • ✅ lsp • ✅ tsc
 ```
 
 ### Rendered diagnostic panel (TUI)
@@ -279,29 +277,17 @@ When the `piLensRenderer` setting is enabled, checks also produce a color-coded 
 
 **All checks clean:**
 ```
-🔍 pi-lens: 1 file(s) checked — all clean (234ms)        (green)
-  ✅ prettier: clean                                      (green)
-  ✅ linters: clean                                        (green)
-  ✅ lsp: clean                                            (green)
-  ✅ tsc: clean                                            (green)
+🔍 pi-lens: 1 file(s) (234ms) - ✅ prettier • ✅ linters • ✅ lsp • ✅ tsc  (green)
 ```
 
 **Issues found:**
 ```
-🔍 pi-lens: 1 file(s) checked — issues found (1200ms)    (yellow)
-  ✅ prettier: clean                                      (green)
-  ⚠ linters: 2 warning(s)                                 (yellow)
-  ✅ lsp: clean                                            (green)
-  ✅ tsc: clean                                            (green)
+🔍 pi-lens: 1 file(s) (1200ms) - ✅ prettier • ⚠ linters • ✅ lsp • ✅ tsc  (yellow)
 ```
 
 **With errors and skipped checks:**
 ```
-🔍 pi-lens: 2 file(s) checked — issues found (890ms)     (yellow)
-  ✗ prettier: error                                       (red)
-  ⚠ linters: 1 error(s), 3 warning(s)                    (yellow)
-  ✅ lsp: clean                                            (green)
-  ⊘ tsc: skipped                                          (dim)
+🔍 pi-lens: 2 file(s) (890ms) - ✗ prettier • ⚠ linters • ✅ lsp • ⊘ tsc  (yellow)
 ```
 
 Press **Ctrl+E** to expand any panel and view the full diagnostic output (lint messages, formatting details, etc.).

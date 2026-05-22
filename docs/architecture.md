@@ -112,19 +112,18 @@ Internal components:
 
 - **`DiagnosticPanel`** — Minimal inline class satisfying the `{ render(width: number): string[] }` TUI contract. Defined inline to avoid importing `@earendil-works/pi-tui` at build time (that package is only available at runtime through pi-coding-agent).
 - **`stripAnsi(text)`** — Security helper that removes ANSI escape sequences from text before rendering. Applied to `sectionsText` when the panel is expanded.
-- **`renderStatusIcon(status, theme)`** — Maps a check status to a themed icon string.
-- **`renderStatusLabel(status, theme)`** — Maps a check status to a themed label string.
+- **`renderStatusIcon(status)`** — Maps a check status to a bare unicode icon string (no theme parameter).
 
-Handles six status types, each with a dedicated theme colour and icon:
+Handles six status types, each with a dedicated icon:
 
-| Status    | Icon | Theme Key | Label   |
-| --------- | ---- | --------- | ------- |
-| `clean`   | ✅   | `success` | clean   |
-| `issues`  | ⚠    | `warning` | issues  |
-| `error`   | ✗    | `error`   | error   |
-| `skipped` | ⊘    | `dim`     | skipped |
-| `running` | ●    | `muted`   | running |
-| `pending` | ●    | `muted`   | pending |
+| Status    | Icon |
+| --------- | ---- |
+| `clean`   | ✅   |
+| `issues`  | ⚠    |
+| `error`   | ✗    |
+| `skipped` | ⊘    |
+| `running` | ●    |
+| `pending` | ●    |
 
 **Never throws** — the entire `renderLensDiagnostics` body is wrapped in a try/catch that returns a safe fallback panel on any error.
 
@@ -148,7 +147,7 @@ The core orchestration module. Responsible for:
 
 Imports from: `@harms-haus/code-lens/client` (daemon lifecycle), `bash-file-detector.ts`, `helpers.ts`, `types.ts`.
 
-Exports: `resolveFilesFromToolResult()`, `runChecks()`, `filterFilesByPatterns()`, `formatCleanMessage()`, `LensState`, `HookResult`, `HookCheckStatuses`.
+Exports: `resolveFilesFromToolResult()`, `runChecks()`, `filterFilesByPatterns()`, `formatSummaryLine(fileCount, durationMs, statuses)`, `LensState`, `HookResult`, `HookCheckStatuses`.
 
 ### `helpers.ts` — Shared Type Guards
 
@@ -231,7 +230,7 @@ Agent calls write/edit/bash tool
                │   Response: { content, details: { statuses, hasIssues } }
                │
                ├─ Extract statuses from daemon response
-               ├─ Build result text (header + issue sections)
+               ├─ Build result text (single summary line via formatSummaryLine, plus issue sections if any)
                └─ Return HookResult { text, statuses, durationMs }
 
   index.ts:

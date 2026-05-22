@@ -37,18 +37,21 @@ describe("renderLensDiagnostics", () => {
     const details = makeDetails();
     const result = renderLensDiagnostics({ details }, { expanded: false }, mockTheme).render(80);
 
-    // Header should say "all clean"
-    expect(result).toEqual(expect.arrayContaining([expect.stringContaining("all clean")]));
+    // Should produce a single summary line
+    expect(result.length).toBe(1);
 
-    // Each check gets ✅ with success color
-    expect(mockTheme.fg).toHaveBeenCalledWith("success", "✅");
-    expect(mockTheme.fg).toHaveBeenCalledWith("success", "clean");
+    // Summary line should contain the expected format
+    expect(result[0]).toContain("pi-lens: 3 file(s) (120ms)");
 
-    // Four status lines for prettier, linters, lsp, tsc
-    expect(result.filter((line) => line.includes("prettier:")).length).toBe(1);
-    expect(result.filter((line) => line.includes("linters:")).length).toBe(1);
-    expect(result.filter((line) => line.includes("lsp:")).length).toBe(1);
-    expect(result.filter((line) => line.includes("tsc:")).length).toBe(1);
+    // The summary line should contain all check labels joined by •
+    expect(result[0]).toContain("prettier");
+    expect(result[0]).toContain("linters");
+    expect(result[0]).toContain("lsp");
+    expect(result[0]).toContain("tsc");
+    expect(result[0]).toContain(" • ");
+
+    // Entire line colored with success
+    expect(mockTheme.fg).toHaveBeenCalledWith("success", expect.stringContaining("pi-lens:"));
   });
 
   // 2. Issues status
@@ -64,18 +67,17 @@ describe("renderLensDiagnostics", () => {
     });
     const result = renderLensDiagnostics({ details }, { expanded: false }, mockTheme).render(80);
 
-    // Header should NOT say "all clean"
-    expect(result.some((line) => line.includes("all clean"))).toBe(false);
+    // Should produce a single summary line
+    expect(result.length).toBe(1);
 
-    // Header should include duration
+    // Summary line should include duration
     expect(result[0]).toContain("120ms");
 
-    // Linters should have ⚠ with warning color
-    expect(mockTheme.fg).toHaveBeenCalledWith("warning", "⚠");
-    expect(mockTheme.fg).toHaveBeenCalledWith("warning", "issues");
+    // Summary line should contain linters
+    expect(result[0]).toContain("linters");
 
-    // Linters line should exist
-    expect(result).toEqual(expect.arrayContaining([expect.stringContaining("linters:")]));
+    // Entire line colored with warning (hasIssues)
+    expect(mockTheme.fg).toHaveBeenCalledWith("warning", expect.stringContaining("pi-lens:"));
   });
 
   // 3. Error status
@@ -91,12 +93,8 @@ describe("renderLensDiagnostics", () => {
     });
     const result = renderLensDiagnostics({ details }, { expanded: false }, mockTheme).render(80);
 
-    // tsc line should have ✗ with error color
-    expect(mockTheme.fg).toHaveBeenCalledWith("error", "✗");
-    expect(mockTheme.fg).toHaveBeenCalledWith("error", "error");
-
-    // tsc line should exist
-    expect(result).toEqual(expect.arrayContaining([expect.stringContaining("tsc:")]));
+    // Summary line should contain tsc
+    expect(result[0]).toContain("tsc");
   });
 
   // 4. Skipped status
@@ -112,11 +110,8 @@ describe("renderLensDiagnostics", () => {
     });
     const result = renderLensDiagnostics({ details }, { expanded: false }, mockTheme).render(80);
 
-    // Prettier should show ⊘ with dim color
-    expect(mockTheme.fg).toHaveBeenCalledWith("dim", "⊘");
-    expect(mockTheme.fg).toHaveBeenCalledWith("dim", "skipped");
-
-    expect(result).toEqual(expect.arrayContaining([expect.stringContaining("prettier:")]));
+    // Summary line should contain prettier
+    expect(result[0]).toContain("prettier");
   });
 
   // 5. Running/pending status
@@ -132,11 +127,8 @@ describe("renderLensDiagnostics", () => {
     });
     const result = renderLensDiagnostics({ details }, { expanded: false }, mockTheme).render(80);
 
-    // LSP should show ● with muted color
-    expect(mockTheme.fg).toHaveBeenCalledWith("muted", "●");
-    expect(mockTheme.fg).toHaveBeenCalledWith("muted", "running");
-
-    expect(result).toEqual(expect.arrayContaining([expect.stringContaining("lsp:")]));
+    // Summary line should contain lsp
+    expect(result[0]).toContain("lsp");
   });
 
   // 6. Expanded sectionsText
@@ -154,7 +146,10 @@ describe("renderLensDiagnostics", () => {
     });
     const result = renderLensDiagnostics({ details }, { expanded: true }, mockTheme).render(80);
 
-    // Should include the section text lines
+    // First line is the summary
+    expect(result[0]).toContain("pi-lens:");
+
+    // Should include the section text lines after blank separator
     expect(result).toEqual(expect.arrayContaining([expect.stringContaining("2 issues found")]));
     expect(result).toEqual(expect.arrayContaining([expect.stringContaining("missing semicolon")]));
   });
@@ -207,11 +202,7 @@ describe("renderLensDiagnostics", () => {
     // Should still render without crashing
     expect(result.length).toBeGreaterThan(0);
 
-    // The unknown status should use muted ● icon and pass the raw status to the label
-    expect(mockTheme.fg).toHaveBeenCalledWith("muted", "●");
-    expect(mockTheme.fg).toHaveBeenCalledWith("muted", "bogus_status");
-
-    // Prettier line should still exist
-    expect(result).toEqual(expect.arrayContaining([expect.stringContaining("prettier:")]));
+    // Summary line should still contain prettier
+    expect(result[0]).toContain("prettier");
   });
 });

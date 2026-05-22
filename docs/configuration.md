@@ -27,13 +27,12 @@ pi-lens supports one user-level setting stored in `~/.pi/agent/settings.json`. T
 
 After each tool call that triggers checks (write, edit, or bash with file-writing commands), pi-lens displays a color-coded diagnostic panel in the TUI via `registerMessageRenderer`. The panel includes:
 
-- **Header** — file count, overall status (all clean / issues found), and check duration in milliseconds.
-- **Per-check status lines** — one row each for prettier, linters, LSP, and tsc with status icons:
+- **Summary line** — file count, check duration in milliseconds, and per-check status icons with labels joined by `•`. Each check (prettier, linters, LSP, tsc) appears as a single entry with a status icon:
   - ✅ `clean` (success) — no issues detected
   - ⚠ `issues` (warning) — problems found
   - ✗ `error` (error) — check failed to run
   - ⊘ `skipped` (dim) — check disabled or not applicable
-- **Expandable detail text** — full diagnostic output shown when the panel is expanded.
+- **Optional expanded detail** — error details from the daemon shown below the summary when the panel is expanded.
 
 #### When `false` (default)
 
@@ -257,7 +256,7 @@ All fields are optional. Only include the ones you want to override from default
 | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Type**        | `boolean`                                                                                                                                                                                                 |
 | **Default**     | `true`                                                                                                                                                                                                    |
-| **Description** | When `true`, pi-lens always appends a result message to the tool output, even when all checks pass ("all clean"). When `false`, clean results produce no additional output, keeping tool results minimal. |
+| **Description** | When `true`, pi-lens always displays the summary line in tool output, even when all checks pass cleanly. When `false`, clean results produce no additional output, keeping tool results minimal. |
 
 ```json
 { "alwaysReport": false }
