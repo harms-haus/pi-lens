@@ -163,7 +163,10 @@ function createSubagentChecker(
       for (const f of files) previousFiles.add(f);
       if (newFiles.length === 0) {
         lastCheckTime = Date.now();
-        if (hasPendingCheck) { hasPendingCheck = false; scheduleCooldownCheck(); }
+        if (hasPendingCheck) {
+          hasPendingCheck = false;
+          scheduleCooldownCheck();
+        }
         return;
       }
 
@@ -177,30 +180,52 @@ function createSubagentChecker(
         if (ctx) sendDiagnosticMessage(pi, ctx, result, newFiles.length);
       }
 
-      if (hasPendingCheck) { hasPendingCheck = false; scheduleCooldownCheck(); }
+      if (hasPendingCheck) {
+        hasPendingCheck = false;
+        scheduleCooldownCheck();
+      }
     } catch {
       if (shutdown) return;
       lastCheckTime = Date.now();
-      if (hasPendingCheck) { hasPendingCheck = false; scheduleCooldownCheck(); }
+      if (hasPendingCheck) {
+        hasPendingCheck = false;
+        scheduleCooldownCheck();
+      }
     } finally {
       checkInFlight = false;
     }
   }
 
   function scheduleCooldownCheck(): void {
-    if (pendingTimer !== undefined) { clearTimeout(pendingTimer); pendingTimer = undefined; }
+    if (pendingTimer !== undefined) {
+      clearTimeout(pendingTimer);
+      pendingTimer = undefined;
+    }
     const remaining = Math.max(0, SUBAGENT_CHECK_COOLDOWN_MS - (Date.now() - lastCheckTime));
-    pendingTimer = setTimeout(() => { pendingTimer = undefined; void runChecksAndPublish(); }, remaining);
+    pendingTimer = setTimeout(() => {
+      pendingTimer = undefined;
+      void runChecksAndPublish();
+    }, remaining);
   }
 
-  function markPending(): void { hasPendingCheck = true; }
-  function markFileActivity(): void { hadFileModifyingActivity = true; }
+  function markPending(): void {
+    hasPendingCheck = true;
+  }
+  function markFileActivity(): void {
+    hadFileModifyingActivity = true;
+  }
 
   function clear(): void {
     shutdown = true;
-    if (pendingTimer !== undefined) { clearTimeout(pendingTimer); pendingTimer = undefined; }
-    hasPendingCheck = false; checkInFlight = false;
-    hadFileModifyingActivity = false; lastCheckTime = 0; previousFiles = new Set();
+    if (pendingTimer !== undefined) {
+      clearTimeout(pendingTimer);
+      pendingTimer = undefined;
+    }
+    hasPendingCheck = false;
+    checkInFlight = false;
+    hadFileModifyingActivity = false;
+    lastCheckTime = 0;
+    previousFiles = new Set();
   }
 
   function reset(): void {
@@ -231,10 +256,18 @@ function createSubagentChecker(
     registerCheckedFiles,
     clear,
     reset,
-    get lastCheckTime() { return lastCheckTime; },
-    get checkInFlight() { return checkInFlight; },
-    get hasPendingCheck() { return hasPendingCheck; },
-    get hadFileModifyingActivity() { return hadFileModifyingActivity; },
+    get lastCheckTime() {
+      return lastCheckTime;
+    },
+    get checkInFlight() {
+      return checkInFlight;
+    },
+    get hasPendingCheck() {
+      return hasPendingCheck;
+    },
+    get hadFileModifyingActivity() {
+      return hadFileModifyingActivity;
+    },
   };
 }
 
