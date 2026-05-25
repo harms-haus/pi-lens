@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderLensDiagnostics, type LensDiagnosticDetails } from "../renderer.js";
+import { type CheckStatus } from "../types.js";
 
 // ── Shared mock theme ─────────────────────────────────────────────────
 
@@ -190,7 +191,7 @@ describe("renderLensDiagnostics", () => {
   it("handles unknown status values", () => {
     const details = makeDetails({
       statuses: {
-        prettier: "bogus_status" as string,
+        prettier: "bogus_status" as unknown as CheckStatus,
         linters: "clean",
         lsp: "clean",
         tsc: "clean",
@@ -204,5 +205,35 @@ describe("renderLensDiagnostics", () => {
 
     // Summary line should still contain prettier
     expect(result[0]).toContain("prettier");
+  });
+
+  // ── Edge cases ──────────────────────────────────────────────────────
+
+  describe("edge cases", () => {
+    it("catches exceptions and returns error fallback", () => {
+      const maliciousDetails = {
+        hasIssues: false,
+        fileCount: 1,
+        durationMs: 100,
+      };
+      Object.defineProperty(maliciousDetails, "statuses", {
+        get() {
+          throw new Error("boom");
+        },
+      });
+      const result = renderLensDiagnostics(
+        { details: maliciousDetails as LensDiagnosticDetails },
+        { expanded: false },
+        mockTheme,
+      );
+      const lines = result.render(80);
+      expect(lines).toEqual(
+        expect.arrayContaining([expect.stringContaining("error rendering diagnostics")]),
+      );
+      expect(mockTheme.fg).toHaveBeenCalledWith(
+        "error",
+        expect.stringContaining("error rendering diagnostics"),
+      );
+    });
   });
 });

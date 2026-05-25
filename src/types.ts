@@ -31,7 +31,14 @@ export interface LensConfig {
 }
 
 /** Status of a check */
-export type CheckStatus = "pending" | "running" | "clean" | "issues" | "error" | "skipped";
+export const CHECK_STATUSES = ["pending", "running", "clean", "issues", "error", "skipped"] as const;
+export type CheckStatus = (typeof CHECK_STATUSES)[number];
+
+export const VALID_CHECK_STATUSES: Set<CheckStatus> = new Set(CHECK_STATUSES);
+
+export const CHECK_KEYS = ["prettier", "linters", "lsp", "tsc"] as const;
+export type CheckKey = (typeof CHECK_KEYS)[number];
+export type CheckStatuses = { [K in CheckKey]: CheckStatus };
 
 /** Unified status bar payload */
 export interface LensStatusPayload {

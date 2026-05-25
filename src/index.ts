@@ -11,8 +11,9 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { ensureDaemon, stopDaemon } from "@harms-haus/code-lens/client";
 import { loadConfig, DEFAULT_CONFIG, loadRendererSetting } from "./config.js";
 import { resolveFilesFromToolResult, runChecks } from "./hook-runner.js";
-import type { CheckStatus, LensStatusPayload } from "./types.js";
-import type { LensState, HookCheckStatuses } from "./hook-runner.js";
+import { type CheckStatuses } from "./types.js";
+import type { LensStatusPayload } from "./types.js";
+import type { LensState } from "./hook-runner.js";
 import { isRecord } from "./helpers.js";
 import { renderLensDiagnostics } from "./renderer.js";
 import type { LensDiagnosticDetails } from "./renderer.js";
@@ -26,7 +27,7 @@ let rendererEnabled = false;
 function sendDiagnosticMessage(
   pi: ExtensionAPI,
   _ctx: ExtensionContext,
-  result: { text: string; statuses: HookCheckStatuses; durationMs: number },
+  result: { text: string; statuses: CheckStatuses; durationMs: number },
   fileCount: number,
 ): void {
   try {
@@ -52,12 +53,7 @@ function sendDiagnosticMessage(
 
 // ── Status Bar Helpers ─────────────────────────────────────────────────
 
-function buildStatusPayload(checkStatuses?: {
-  prettier: CheckStatus;
-  linters: CheckStatus;
-  lsp: CheckStatus;
-  tsc: CheckStatus;
-}): LensStatusPayload {
+function buildStatusPayload(checkStatuses?: CheckStatuses): LensStatusPayload {
   return {
     prettier: checkStatuses?.prettier ?? "pending",
     linters: checkStatuses?.linters ?? "pending",
@@ -193,12 +189,7 @@ async function executeCheck(
 function createSubagentChecker(
   pi: ExtensionAPI,
   state: LensState,
-  publishStatus: (statuses?: {
-    prettier: CheckStatus;
-    linters: CheckStatus;
-    lsp: CheckStatus;
-    tsc: CheckStatus;
-  }) => void,
+  publishStatus: (statuses?: CheckStatuses) => void,
   getContext: () => ExtensionContext | undefined,
 ): SubagentChecker {
   const cs: CheckerState = {
@@ -223,7 +214,7 @@ function createSubagentChecker(
     }, remaining);
   }
 
-  async function runChecksAndPublish(): Promise<void> {
+  function runChecksAndPublish(): Promise<void> {
     return executeCheck(cs, pi, state, publishStatus, getContext, scheduleCooldownCheck);
   }
 
@@ -294,12 +285,7 @@ export default function (pi: ExtensionAPI): void {
 
   // ── Status Publishing ──────────────────────────────────────────────
 
-  function publishStatus(checkStatuses?: {
-    prettier: CheckStatus;
-    linters: CheckStatus;
-    lsp: CheckStatus;
-    tsc: CheckStatus;
-  }): void {
+  function publishStatus(checkStatuses?: CheckStatuses): void {
     if (!currentCtx?.hasUI) return;
 
     const payload = buildStatusPayload(checkStatuses);

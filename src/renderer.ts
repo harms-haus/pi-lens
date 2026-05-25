@@ -7,15 +7,13 @@
  * the pi TUI.
  */
 
+import { CHECK_KEYS, type CheckStatuses } from "./types.js";
+import { statusToIcon } from "./helpers.js";
+
 // ── Types ──────────────────────────────────────────────────────────────
 
 export interface LensDiagnosticDetails {
-  statuses: {
-    prettier: string;
-    linters: string;
-    lsp: string;
-    tsc: string;
-  };
+  statuses: CheckStatuses;
   hasIssues: boolean;
   fileCount: number;
   durationMs: number;
@@ -42,24 +40,6 @@ type Theme = {
   bg: (color: string, text: string) => string;
 };
 
-function renderStatusIcon(status: string): string {
-  switch (status) {
-    case "clean":
-      return "✅";
-    case "issues":
-      return "⚠";
-    case "error":
-      return "✗";
-    case "skipped":
-      return "⊘";
-    case "running":
-    case "pending":
-      return "●";
-    default:
-      return "●";
-  }
-}
-
 function stripAnsi(text: string): string {
   return text.replace(
     /* eslint-disable-next-line no-control-regex -- ANSI escape sequences must match control characters */
@@ -85,17 +65,10 @@ export function renderLensDiagnostics(
     }
 
     // ── Summary line ───────────────────────────────────────────────
-    const checks = [
-      { key: "prettier", label: "prettier" },
-      { key: "linters", label: "linters" },
-      { key: "lsp", label: "lsp" },
-      { key: "tsc", label: "tsc" },
-    ] as const;
-
-    const checkParts = checks.map((check) => {
-      const status = details.statuses[check.key];
-      const icon = renderStatusIcon(status);
-      return `${icon} ${check.label}`;
+    const checkParts = CHECK_KEYS.map((key) => {
+      const status = details.statuses[key];
+      const icon = statusToIcon(status);
+      return `${icon} ${key}`;
     });
 
     const summaryLine = `🔍 pi-lens: ${details.fileCount} file(s) (${details.durationMs}ms) - ${checkParts.join(" • ")}`;

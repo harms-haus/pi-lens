@@ -74,28 +74,33 @@ At factory level (before any session), registers the message renderer:
 
 - **`pi.registerMessageRenderer("pi-lens-diagnostics", renderLensDiagnostics)`** — Registers the custom TUI renderer from `renderer.ts`. This happens once when the extension function is called, not per-session.
 
-Contains five module-scope helpers:
+Contains seven module-scope helpers:
 
 - **`buildStatusPayload(checkStatuses?)`** — Builds the `LensStatusPayload` object for the status bar. Maps per-check statuses to a unified payload with `pending` defaults for missing values.
-- **`hasToolActivity(partialResult)`** — Inspects `partialResult.details.windows[].lines[].kind` looking for `"tool"` entries. Returns `true` if any tool activity is detected in the streaming partial result. Uses defensive null checks throughout.
+- **`hasFileModifyingToolActivity(partialResult)`** — Inspects `partialResult.details.windows[].lines[]` for entries with `kind === "tool"` where the tool name is `write`, `edit`, or `bash`. Returns `true` only for file-modifying tool activity. Uses defensive null checks throughout.
 - **`resolveChangedFilesFromGit(pi, cwd)`** — Runs `git diff --name-only HEAD` via `pi.exec` to discover files changed since the last commit. Deduplicates results and filters to files that exist on disk.
-- **`createSubagentChecker(pi, state, publishStatus)`** — Factory function that encapsulates all subagent monitoring state (cooldown timing, in-flight tracking, pending flags, shutdown signal). Returns a `SubagentChecker` interface.
-- **`sendDiagnosticMessage(pi, ctx, result, fileCount)`** — Sends a structured diagnostic message via `pi.sendMessage()` with `customType: "pi-lens-diagnostics"` and a `LensDiagnosticDetails` payload. Called from both the `tool_result` handler and the subagent checker's `runChecksAndPublish()`. Wrapped in try/catch so it never fails the original tool result.
+- **`executeCheck(cs, pi, state, publishStatus, getContext, scheduleCooldownCheck)`** — Core async function that performs the actual check: resolves git-changed files, filters to only new files (via `previousFiles` set), runs daemon checks, publishes status, sends diagnostic messages if enabled. Checks the `shutdown` flag after each `await` to bail out early.
+- **`createSubagentChecker(pi, state, publishStatus, getContext)`** — Factory function that encapsulates all subagent monitoring state (cooldown timing, in-flight tracking, pending flags, file deduplication via `previousFiles`, activity flag, shutdown signal). Returns a `SubagentChecker` interface.
+- **`sendDiagnosticMessage(pi, ctx, result, fileCount)`** — Sends a structured diagnostic message via `pi.sendMessage()` with `customType: "pi-lens-diagnostics"` and a `LensDiagnosticDetails` payload. Called from both the `tool_result` handler and the subagent checker's check execution. Wrapped in try/catch so it never fails the original tool result.
 
 ### SubagentChecker Interface
 
 The `SubagentChecker` object manages cooldown-gated check scheduling:
 
-| Method / Getter           | Description                                                                                       |
-| ------------------------- | ------------------------------------------------------------------------------------------------- |
-| `runChecksAndPublish()`   | Async: resolves git-changed files, runs checks via the daemon, publishes status. Fire-and-forget. |
-| `scheduleCooldownCheck()` | Schedules a check after the remaining cooldown time. Cancels any existing timer.                  |
-| `markPending()`           | Sets the `hasPendingCheck` flag — used to coalesce multiple rapid updates into one check.         |
-| `clear()`                 | Cancels timers, sets the shutdown flag, resets all state. Used during `session_shutdown`.         |
-| `reset()`                 | Calls `clear()` then unsets the shutdown flag. Used during `session_start`.                       |
-| `lastCheckTime`           | Getter — timestamp of the last completed check.                                                   |
-| `checkInFlight`           | Getter — whether a check is currently running.                                                    |
-| `hasPendingCheck`         | Getter — whether a check has been deferred by cooldown logic.                                     |
+| Method / Getter              | Description                                                                                                            |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `runChecksAndPublish()`      | Async: resolves git-changed files (filtering to only new files via `previousFiles`), runs checks, publishes status. Fire-and-forget. |
+| `runFinalCheckAndPublish()`  | Resets `previousFiles` set and runs a full check. If a check is in-flight, defers via `hasPendingCheck` + cooldown.    |
+| `scheduleCooldownCheck()`    | Schedules a check after the remaining cooldown time. Cancels any existing timer.                                       |
+| `markPending()`              | Sets the `hasPendingCheck` flag — used to coalesce multiple rapid updates into one check.                              |
+| `markFileActivity()`         | Sets the `hadFileModifyingActivity` flag — used to gate the final check in `tool_execution_end`.                       |
+| `registerCheckedFiles(files)` | Adds files to the `previousFiles` set so the subagent checker skips already-checked files. Called from `tool_result`. |
+| `clear()`                    | Cancels timers, sets the shutdown flag, resets all state. Used during `session_shutdown`.                              |
+| `reset()`                    | Calls `clear()` then unsets the shutdown flag. Used during `session_start`.                                            |
+| `lastCheckTime`              | Getter — timestamp of the last completed check.                                                                        |
+| `checkInFlight`              | Getter — whether a check is currently running.                                                                         |
+| `hasPendingCheck`            | Getter — whether a check has been deferred by cooldown logic.                                                          |
+| `hadFileModifyingActivity`   | Getter — whether any file-modifying tool activity was detected during subagent streaming.                              |
 
 Imports from: `@harms-haus/code-lens/client` (daemon lifecycle), `config.ts`, `helpers.ts`, `hook-runner.ts`, `renderer.ts`, `types.ts`.
 
@@ -112,7 +117,6 @@ Internal components:
 
 - **`DiagnosticPanel`** — Minimal inline class satisfying the `{ render(width: number): string[] }` TUI contract. Defined inline to avoid importing `@earendil-works/pi-tui` at build time (that package is only available at runtime through pi-coding-agent).
 - **`stripAnsi(text)`** — Security helper that removes ANSI escape sequences from text before rendering. Applied to `sectionsText` when the panel is expanded.
-- **`renderStatusIcon(status)`** — Maps a check status to a bare unicode icon string (no theme parameter).
 
 Handles six status types, each with a dedicated icon:
 
@@ -127,7 +131,7 @@ Handles six status types, each with a dedicated icon:
 
 **Never throws** — the entire `renderLensDiagnostics` body is wrapped in a try/catch that returns a safe fallback panel on any error.
 
-Imports from: (none — self-contained).
+Imports from: `types.ts`, `helpers.ts`.
 
 ### `hook-runner.ts` — Daemon Client & File Resolution
 
@@ -149,19 +153,25 @@ Imports from: `@harms-haus/code-lens/client` (daemon lifecycle), `bash-file-dete
 
 Exports: `resolveFilesFromToolResult()`, `runChecks()`, `filterFilesByPatterns()`, `formatSummaryLine(fileCount, durationMs, statuses)`, `LensState`, `HookResult`, `HookCheckStatuses`.
 
-### `helpers.ts` — Shared Type Guards
+### `helpers.ts` — Shared Helpers
 
-Runtime type guard utilities used across modules.
+Runtime type guard and utility functions used across modules.
 
 - **`isRecord(value)`** — Type guard that checks if a value is a non-null, non-array object (`typeof === "object" && value !== null && !Array.isArray(value)`). Used by `index.ts` and `hook-runner.ts` to safely traverse untyped API payloads without `as` casts.
+- **`statusToIcon(status)`** — Maps a check status string to a unicode icon (`✅`, `⚠`, `✗`, `⊘`, `●`). Used by `renderer.ts` for diagnostic display.
 
-### `types.ts` — Core Types
+### `types.ts` — Core Types & Constants
 
-Pure type declarations with no runtime code:
+Type declarations and runtime constants shared across modules:
 
-- **`LensConfig`** — Configuration shape (check toggles, patterns, timeouts, etc.)
-- **`CheckStatus`** — Union type: `"pending" | "running" | "clean" | "issues" | "error" | "skipped"`
-- **`LensStatusPayload`** — Status bar payload with a `CheckStatus` per check category
+- **`CHECK_STATUSES`** — `const` tuple `['pending', 'running', 'clean', 'issues', 'error', 'skipped']` (used as a basis for derived types).
+- **`CheckStatus`** — Union type derived from `CHECK_STATUSES`: `"pending" | "running" | "clean" | "issues" | "error" | "skipped"`.
+- **`VALID_CHECK_STATUSES`** — `Set<CheckStatus>` for runtime validation.
+- **`CHECK_KEYS`** — `const` tuple `['prettier', 'linters', 'lsp', 'tsc']`.
+- **`CheckKey`** — Union type derived from `CHECK_KEYS`.
+- **`CheckStatuses`** — Mapped type `{ [K in CheckKey]: CheckStatus }`.
+- **`LensConfig`** — Configuration shape (check toggles, patterns, timeouts, etc.).
+- **`LensStatusPayload`** — Status bar payload with a `CheckStatus` per check category.
 
 ### `config.ts` — Configuration Loader
 
@@ -254,8 +264,10 @@ Agent runs delegate_to_subagents tool
   index.ts: tool_execution_update handler
          │
          ├─ Filter: only delegate_to_subagents
-         ├─ hasToolActivity(partialResult)
-         │     └─ Inspect partialResult.details.windows[].lines[].kind === 'tool'
+         ├─ hasFileModifyingToolActivity(partialResult)
+         │     └─ Inspect partialResult.details.windows[].lines[] for kind === 'tool' with write/edit/bash name
+         │
+         ├─ checker.markFileActivity()
          │
          ├─ Cooldown logic:
          │     ├─ Cooldown elapsed AND no check in-flight?
@@ -264,10 +276,11 @@ Agent runs delegate_to_subagents tool
          │           ├─ checker.markPending()
          │           └─ If no check in-flight: checker.scheduleCooldownCheck()
          │
-         └─ runChecksAndPublish() internals:
+         └─ runChecksAndPublish() internals (via executeCheck):
                ├─ resolveChangedFilesFromGit(pi, cwd)
                │     └─ git diff --name-only HEAD → deduplicated, existing files
-               ├─ runChecks(files, cwd, config)
+               ├─ Filter to new files only (not in previousFiles set)
+               ├─ runChecks(newFiles, cwd, config)
                │     └─ Daemon fullCheck request (same as tool_result flow)
                ├─ publishStatus(result.statuses)
                ├─ rendererEnabled AND result.text?
@@ -284,7 +297,8 @@ Agent runs delegate_to_subagents tool
   index.ts: tool_execution_end handler
          │
          ├─ Filter: only delegate_to_subagents
-         └─ checker.runChecksAndPublish()  (forced, bypasses cooldown)
+         └─ checker.hadFileModifyingActivity?
+               └─ checker.runFinalCheckAndPublish()  (resets previousFiles, bypasses cooldown)
 ```
 
 **Cooldown algorithm (5-second minimum between checks):**
@@ -314,12 +328,13 @@ tool_result
   └─ Return modified tool result with appended content (plain text for LLM)
 
 tool_execution_update (subagent streaming)
-  ├─ hasToolActivity(partialResult)?
+  ├─ hasFileModifyingToolActivity(partialResult)?
+  ├─ checker.markFileActivity()
   ├─ Cooldown elapsed, no check in-flight? → checker.runChecksAndPublish()
   └─ Otherwise → checker.markPending() + scheduleCooldownCheck()
 
 tool_execution_end (subagent complete)
-  └─ checker.runChecksAndPublish()  (forced, no cooldown)
+  └─ checker.hadFileModifyingActivity? → checker.runFinalCheckAndPublish()  (resets previousFiles, forced)
 
 session_shutdown
   ├─ stopDaemon(cwd)              → SIGTERM daemon, clean socket/metadata
@@ -369,12 +384,14 @@ Status deduplication is performed by comparing JSON strings — if the status pa
 The `createSubagentChecker` factory encapsulates all subagent monitoring state in closure variables — no class or external object is involved:
 
 ```typescript
-// Encapsulated within createSubagentChecker closure:
+// Encapsulated within CheckerState (createSubagentChecker closure):
 let lastCheckTime: number = 0; // Timestamp of last completed check
 let checkInFlight: boolean = false; // Whether a daemon request is active
 let pendingTimer: setTimeout | undefined; // Cooldown timer handle
 let hasPendingCheck: boolean = false; // Coalescing flag for rapid updates
+let hadFileModifyingActivity: boolean = false; // Whether file-modifying tools were detected
 let shutdown: boolean = false; // Prevents post-shutdown execution
+let previousFiles: Set<string> = new Set(); // Files already checked in this session
 ```
 
 The **`shutdown` flag** is critical for correctness across async boundaries. When `clear()` is called during `session_shutdown`, it sets `shutdown = true`. Any in-flight `runChecksAndPublish()` call checks this flag after each `await` point and exits early if set. This prevents stale daemon requests from publishing status to a destroyed session context.

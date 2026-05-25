@@ -85,7 +85,7 @@ function createMockPi(): {
   return { pi, handlers };
 }
 
-function createMockContext(overrides?: Partial<ExtensionContext>): ExtensionContext {
+function createMockContext(overrides?: Partial<ExtensionContext>) {
   return {
     ui: {
       notify: vi.fn(),
@@ -131,7 +131,7 @@ function createMockContext(overrides?: Partial<ExtensionContext>): ExtensionCont
     compact: vi.fn(),
     getSystemPrompt: vi.fn(),
     ...overrides,
-  } as unknown as ExtensionContext;
+  };
 }
 
 // ── Subagent test helpers ──────────────────────────────────────────
@@ -222,7 +222,7 @@ describe("session_start", () => {
 
   it("works without UI (hasUI: false)", async () => {
     const { pi, handlers } = createMockPi();
-    const ctx = createMockContext({ hasUI: false } as Partial<ExtensionContext>);
+    const ctx = createMockContext({ hasUI: false });
     extension(pi);
 
     const handler = handlers.get("session_start")!;
@@ -232,7 +232,7 @@ describe("session_start", () => {
 
   it("does not call setStatus when hasUI is false", async () => {
     const { pi, handlers } = createMockPi();
-    const ctx = createMockContext({ hasUI: false } as Partial<ExtensionContext>);
+    const ctx = createMockContext({ hasUI: false });
     extension(pi);
     const handler = handlers.get("session_start")!;
     await handler({ type: "session_start", reason: "startup" }, ctx);
@@ -904,6 +904,119 @@ describe("hasFileModifyingToolActivity tool-name filtering", () => {
   });
 });
 
+// ── hasFileModifyingToolActivity edge cases ───────────────────────────
+
+describe("hasFileModifyingToolActivity edge cases", () => {
+  it("partialResult with null details does not trigger check", async () => {
+    const { pi, handlers } = createMockPi();
+    const ctx = createMockContext();
+    extension(pi);
+
+    const startHandler = handlers.get("session_start")!;
+    await startHandler({ type: "session_start", reason: "startup" }, ctx);
+
+    const handler = handlers.get("tool_execution_update")!;
+    handler({
+      toolName: "delegate_to_subagents",
+      partialResult: { details: null },
+    });
+
+    expect(pi.exec).not.toHaveBeenCalled();
+  });
+
+  it("partialResult with no details key does not trigger check", async () => {
+    const { pi, handlers } = createMockPi();
+    const ctx = createMockContext();
+    extension(pi);
+
+    const startHandler = handlers.get("session_start")!;
+    await startHandler({ type: "session_start", reason: "startup" }, ctx);
+
+    const handler = handlers.get("tool_execution_update")!;
+    handler({
+      toolName: "delegate_to_subagents",
+      partialResult: {},
+    });
+
+    expect(pi.exec).not.toHaveBeenCalled();
+  });
+
+  it("window line with kind !== \"tool\" does not trigger check", async () => {
+    const { pi, handlers } = createMockPi();
+    const ctx = createMockContext();
+    extension(pi);
+
+    const startHandler = handlers.get("session_start")!;
+    await startHandler({ type: "session_start", reason: "startup" }, ctx);
+
+    const handler = handlers.get("tool_execution_update")!;
+    handler({
+      toolName: "delegate_to_subagents",
+      partialResult: {
+        details: {
+          windows: [
+            {
+              lines: [{ kind: "text", content: "write file.ts" }],
+            },
+          ],
+        },
+      },
+    });
+
+    expect(pi.exec).not.toHaveBeenCalled();
+  });
+
+  it("window line with non-string content does not trigger check", async () => {
+    const { pi, handlers } = createMockPi();
+    const ctx = createMockContext();
+    extension(pi);
+
+    const startHandler = handlers.get("session_start")!;
+    await startHandler({ type: "session_start", reason: "startup" }, ctx);
+
+    const handler = handlers.get("tool_execution_update")!;
+    handler({
+      toolName: "delegate_to_subagents",
+      partialResult: {
+        details: {
+          windows: [
+            {
+              lines: [{ kind: "tool", content: null }],
+            },
+          ],
+        },
+      },
+    });
+
+    expect(pi.exec).not.toHaveBeenCalled();
+  });
+
+  it("window line with non-write/edit/bash tool name does not trigger check", async () => {
+    const { pi, handlers } = createMockPi();
+    const ctx = createMockContext();
+    extension(pi);
+
+    const startHandler = handlers.get("session_start")!;
+    await startHandler({ type: "session_start", reason: "startup" }, ctx);
+
+    const handler = handlers.get("tool_execution_update")!;
+    handler({
+      toolName: "delegate_to_subagents",
+      partialResult: {
+        details: {
+          windows: [
+            {
+              lines: [{ kind: "tool", content: "ls -la" }],
+            },
+          ],
+        },
+      },
+    });
+
+    expect(pi.exec).not.toHaveBeenCalled();
+  });
+});
+
 // ── tool_execution_update triggers check ─────────────────────────────
 
 describe("tool_execution_update triggers check", () => {
@@ -1265,6 +1378,258 @@ describe("subagent checker internal paths", () => {
     await vi.advanceTimersByTimeAsync(6000);
 
     expect(runChecks).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── runFinalCheckAndPublish defers when check in-flight ───────────────
+
+describe("runFinalCheckAndPublish defers when check in-flight", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function setupSession() {
+    const { pi, handlers } = createMockPi();
+    const ctx = createMockContext();
+    extension(pi);
+
+    const startHandler = handlers.get("session_start")!;
+    await startHandler({ type: "session_start", reason: "startup" }, ctx);
+
+    return { pi, handlers, ctx };
+  }
+
+  it("defers final check when a check is already in-flight", async () => {
+    const { pi, handlers } = await setupSession();
+
+    vi.mocked(pi.exec).mockResolvedValue({
+      code: 0,
+      stdout: "src/foo.ts",
+      stderr: "",
+      killed: false,
+    });
+
+    // Keep runChecks hanging until we resolve it manually
+    let resolveChecks!: () => void;
+    vi.mocked(runChecks).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveChecks = () => {
+            resolve({
+              text: "clean",
+              statuses: { prettier: "clean", linters: "clean", lsp: "clean", tsc: "clean" },
+              durationMs: 10,
+            });
+          };
+        }),
+    );
+
+    // Fire tool_execution_update with file activity → triggers runChecksAndPublish
+    const updateHandler = handlers.get("tool_execution_update")!;
+    updateHandler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-defer-update",
+      partialResult: createToolActivityPartialResult(),
+    });
+
+    // Let git resolve but keep runChecks pending
+    await vi.advanceTimersByTimeAsync(100);
+    expect(runChecks).toHaveBeenCalledTimes(1);
+
+    // Now fire tool_execution_end while check is still in-flight
+    const endHandler = handlers.get("tool_execution_end")!;
+    endHandler({
+      type: "tool_execution_end",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-defer-end",
+    });
+
+    // runChecks should still only have been called once (the in-flight one)
+    expect(runChecks).toHaveBeenCalledTimes(1);
+
+    // Now resolve the in-flight check
+    resolveChecks();
+    await vi.advanceTimersByTimeAsync(100);
+
+    // After resolving, advance timers past cooldown — deferred check should run
+    await vi.advanceTimersByTimeAsync(6000);
+
+    expect(runChecks).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ── Session shutdown with hasUI=false ────────────────────────────────
+
+describe("session shutdown with hasUI=false", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("never calls setStatus during shutdown when hasUI is false", async () => {
+    const { pi, handlers } = createMockPi();
+    const ctx = createMockContext({ hasUI: false });
+    extension(pi);
+
+    const startHandler = handlers.get("session_start")!;
+    await startHandler({ type: "session_start", reason: "startup" }, ctx);
+
+    // setStatus should never have been called during session_start
+    expect(ctx.ui.setStatus).not.toHaveBeenCalled();
+
+    // Now trigger shutdown
+    const shutdownHandler = handlers.get("session_shutdown")!;
+    await shutdownHandler({ type: "session_shutdown", reason: "quit" }, ctx);
+
+    // setStatus should still never have been called
+    expect(ctx.ui.setStatus).not.toHaveBeenCalled();
+  });
+});
+
+// ── runChecks throws in subagent path ──────────────────────────────
+
+describe("runChecks throws in subagent path", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function setupSession() {
+    const { pi, handlers } = createMockPi();
+    const ctx = createMockContext();
+    extension(pi);
+
+    const startHandler = handlers.get("session_start")!;
+    await startHandler({ type: "session_start", reason: "startup" }, ctx);
+
+    return { pi, handlers, ctx };
+  }
+
+  it("does not crash when runChecks rejects and subsequent updates still work", async () => {
+    const { pi, handlers } = await setupSession();
+
+    // First git call returns foo.ts, second returns bar.ts (different file so previousFiles doesn't filter it)
+    vi.mocked(pi.exec)
+      .mockResolvedValueOnce({
+        code: 0,
+        stdout: "src/foo.ts",
+        stderr: "",
+        killed: false,
+      })
+      .mockResolvedValueOnce({
+        code: 0,
+        stdout: "src/bar.ts",
+        stderr: "",
+        killed: false,
+      });
+
+    // First call rejects
+    vi.mocked(runChecks).mockRejectedValueOnce(new Error("boom"));
+    // Subsequent calls succeed
+    vi.mocked(runChecks).mockResolvedValue({
+      text: "clean",
+      statuses: { prettier: "clean", linters: "clean", lsp: "clean", tsc: "clean" },
+      durationMs: 10,
+    });
+
+    const updateHandler = handlers.get("tool_execution_update")!;
+
+    // First update — runChecks will throw
+    updateHandler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-throw-1",
+      partialResult: createToolActivityPartialResult(),
+    });
+
+    await vi.runAllTimersAsync();
+    expect(runChecks).toHaveBeenCalledTimes(1);
+
+    // Advance past cooldown
+    await vi.advanceTimersByTimeAsync(6000);
+
+    // Second update — should still work fine
+    updateHandler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-throw-2",
+      partialResult: createToolActivityPartialResult(),
+    });
+
+    await vi.runAllTimersAsync();
+    expect(runChecks).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ── resolveChangedFilesFromGit with blank lines in output ──────────────
+
+describe("resolveChangedFilesFromGit blank line filtering", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function setupSession() {
+    const { pi, handlers } = createMockPi();
+    const ctx = createMockContext();
+    extension(pi);
+
+    const startHandler = handlers.get("session_start")!;
+    await startHandler({ type: "session_start", reason: "startup" }, ctx);
+
+    return { pi, handlers, ctx };
+  }
+
+  it("filters blank and whitespace-only lines from git output", async () => {
+    const { pi, handlers } = await setupSession();
+
+    // Simulate git output with blank lines and whitespace-only lines
+    vi.mocked(pi.exec).mockResolvedValue({
+      code: 0,
+      stdout: "src/foo.ts\n\n\nsrc/bar.ts\n  \n",
+      stderr: "",
+      killed: false,
+    });
+    vi.mocked(runChecks).mockResolvedValue({
+      text: "clean",
+      statuses: { prettier: "clean", linters: "clean", lsp: "clean", tsc: "clean" },
+      durationMs: 10,
+    });
+
+    const updateHandler = handlers.get("tool_execution_update")!;
+    updateHandler({
+      type: "tool_execution_update",
+      toolName: "delegate_to_subagents",
+      toolCallId: "call-blank-lines",
+      partialResult: createToolActivityPartialResult(),
+    });
+
+    await vi.runAllTimersAsync();
+
+    // runChecks should be called with exactly 2 files (blank/whitespace-only lines filtered)
+    expect(runChecks).toHaveBeenCalledTimes(1);
+    const checkedFiles = vi.mocked(runChecks).mock.calls[0]![0];
+    expect(checkedFiles).toHaveLength(2);
+    expect(checkedFiles).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("src/foo.ts"),
+        expect.stringContaining("src/bar.ts"),
+      ]),
+    );
   });
 });
 
@@ -1652,5 +2017,90 @@ describe("diagnostic renderer", () => {
     );
 
     expect(pi.sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+// ── sendDiagnosticMessage branches ────────────────────────────────────
+
+describe("sendDiagnosticMessage branches", () => {
+  it("sets hasIssues true when text contains ✗ but no ⚠", async () => {
+    vi.mocked(loadRendererSetting).mockReturnValue(true);
+    const { pi, handlers } = createMockPi();
+    const ctx = createMockContext({ hasUI: true });
+    extension(pi);
+    await handlers.get("session_start")!({ type: "session_start", reason: "startup" }, ctx);
+
+    vi.mocked(resolveFilesFromToolResult).mockReturnValue(["/home/user/project/src/foo.ts"]);
+    vi.mocked(runChecks).mockResolvedValue({
+      text: "🔍 pi-lens: 1 file(s) (50ms) - ✗ tsc",
+      statuses: { prettier: "clean", linters: "clean", lsp: "clean", tsc: "error" },
+      durationMs: 50,
+    });
+
+    const handler = handlers.get("tool_result")!;
+    await handler(
+      { toolName: "write", input: { path: "/home/user/project/src/foo.ts" }, content: [], isError: false },
+      ctx,
+    );
+
+    expect(pi.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        details: expect.objectContaining({ hasIssues: true }),
+      }),
+    );
+  });
+
+  it("sets sectionsText undefined for single-line text (no newline)", async () => {
+    vi.mocked(loadRendererSetting).mockReturnValue(true);
+    const { pi, handlers } = createMockPi();
+    const ctx = createMockContext({ hasUI: true });
+    extension(pi);
+    await handlers.get("session_start")!({ type: "session_start", reason: "startup" }, ctx);
+
+    vi.mocked(resolveFilesFromToolResult).mockReturnValue(["/home/user/project/src/foo.ts"]);
+    vi.mocked(runChecks).mockResolvedValue({
+      text: "🔍 pi-lens: 1 file(s) (50ms) - ✅ prettier",
+      statuses: { prettier: "clean", linters: "skipped", lsp: "skipped", tsc: "skipped" },
+      durationMs: 50,
+    });
+
+    const handler = handlers.get("tool_result")!;
+    await handler(
+      { toolName: "write", input: { path: "/home/user/project/src/foo.ts" }, content: [], isError: false },
+      ctx,
+    );
+
+    expect(pi.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        details: expect.objectContaining({ sectionsText: undefined }),
+      }),
+    );
+  });
+
+  it("sets hasIssues true and sectionsText for multi-line text with ⚠", async () => {
+    vi.mocked(loadRendererSetting).mockReturnValue(true);
+    const { pi, handlers } = createMockPi();
+    const ctx = createMockContext({ hasUI: true });
+    extension(pi);
+    await handlers.get("session_start")!({ type: "session_start", reason: "startup" }, ctx);
+
+    vi.mocked(resolveFilesFromToolResult).mockReturnValue(["/home/user/project/src/foo.ts"]);
+    vi.mocked(runChecks).mockResolvedValue({
+      text: "🔍 pi-lens: 1 file(s) (50ms) - ⚠ prettier\n  detail line",
+      statuses: { prettier: "issues", linters: "clean", lsp: "clean", tsc: "clean" },
+      durationMs: 50,
+    });
+
+    const handler = handlers.get("tool_result")!;
+    await handler(
+      { toolName: "write", input: { path: "/home/user/project/src/foo.ts" }, content: [], isError: false },
+      ctx,
+    );
+
+    expect(pi.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        details: expect.objectContaining({ hasIssues: true, sectionsText: "  detail line" }),
+      }),
+    );
   });
 });

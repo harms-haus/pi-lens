@@ -12,9 +12,10 @@
 
 import * as path from "node:path";
 import * as fs from "node:fs";
-import type { LensConfig, CheckStatus } from "./types.js";
+import type { LensConfig } from "./types.js";
+import { VALID_CHECK_STATUSES, CHECK_KEYS, type CheckStatuses, type CheckStatus } from "./types.js";
 import { detectFilesFromBashCommand } from "./bash-file-detector.js";
-import { isRecord } from "./helpers.js";
+import { isRecord, statusToIcon } from "./helpers.js";
 import { sendRequest, getSocketPath } from "@harms-haus/code-lens/client";
 
 /** Shared state passed from the extension entry point */
@@ -23,20 +24,14 @@ export interface LensState {
   cwd: string;
 }
 
-/** Per-check status trackers for status bar */
-export interface HookCheckStatuses {
-  prettier: CheckStatus;
-  linters: CheckStatus;
-  lsp: CheckStatus;
-  tsc: CheckStatus;
-}
+export type { CheckStatuses as HookCheckStatuses } from "./types.js";
 
 /** Full result of the hook check pipeline */
 export interface HookResult {
   /** Formatted text to append to tool result */
   text: string;
   /** Per-check statuses for status bar */
-  statuses: HookCheckStatuses;
+  statuses: CheckStatuses;
   /** Total duration in ms */
   durationMs: number;
 }
@@ -108,40 +103,14 @@ export function resolveFilesFromToolResult(
 // ── Formatting ──────────────────────────────────────────────────────────────
 
 /**
- * Map a check status to a unicode icon.
- */
-function statusToIcon(status: string): string {
-  switch (status) {
-    case "clean":
-      return "✅";
-    case "issues":
-      return "⚠";
-    case "error":
-      return "✗";
-    case "skipped":
-      return "⊘";
-    case "running":
-    case "pending":
-      return "●";
-    default:
-      return "●";
-  }
-}
-
-/**
  * Format a single-line summary of all check statuses.
  */
 export function formatSummaryLine(
   fileCount: number,
   durationMs: number,
-  statuses: HookCheckStatuses,
+  statuses: CheckStatuses,
 ): string {
-  const parts = [
-    `${statusToIcon(statuses.prettier)} prettier`,
-    `${statusToIcon(statuses.linters)} linters`,
-    `${statusToIcon(statuses.lsp)} lsp`,
-    `${statusToIcon(statuses.tsc)} tsc`,
-  ];
+  const parts = CHECK_KEYS.map((key) => `${statusToIcon(statuses[key])} ${key}`);
   return `🔍 pi-lens: ${fileCount} file(s) (${durationMs}ms) - ${parts.join(" • ")}`;
 }
 
@@ -149,13 +118,10 @@ export function formatSummaryLine(
 
 /** Parsed result from the daemon's fullCheck response */
 interface ParsedDaemonResponse {
-  statuses: HookCheckStatuses;
+  statuses: CheckStatuses;
   hasIssues: boolean;
   sectionsText: string;
 }
-
-/** Valid CheckStatus values */
-const VALID_CHECK_STATUSES = new Set(["pending", "running", "clean", "issues", "error", "skipped"]);
 
 /**
  * Parse and validate the daemon's fullCheck response.
@@ -163,7 +129,7 @@ const VALID_CHECK_STATUSES = new Set(["pending", "running", "clean", "issues", "
  */
 function parseDaemonResponse(
   response: unknown,
-  initialStatuses: HookCheckStatuses,
+  initialStatuses: CheckStatuses,
 ): ParsedDaemonResponse {
   const statuses = { ...initialStatuses };
 
@@ -175,9 +141,9 @@ function parseDaemonResponse(
   if (isRecord(details)) {
     const daemonStatuses = details.statuses;
     if (isRecord(daemonStatuses)) {
-      for (const key of ["prettier", "linters", "lsp", "tsc"] as const) {
+      for (const key of CHECK_KEYS) {
         const value = daemonStatuses[key];
-        if (typeof value === "string" && VALID_CHECK_STATUSES.has(value)) {
+        if (typeof value === "string" && VALID_CHECK_STATUSES.has(value as CheckStatus)) {
           statuses[key] = value as CheckStatus;
         }
       }
@@ -189,10 +155,13 @@ function parseDaemonResponse(
 
   const content = response.content;
   let sectionsText = "";
-  if (Array.isArray(content) && content.length > 0 && isRecord(content[0])) {
-    const text = content[0].text;
-    if (typeof text === "string") {
-      sectionsText = text;
+  if (Array.isArray(content) && content.length > 0) {
+    const firstItem: unknown = content[0];
+    if (isRecord(firstItem)) {
+      const text = firstItem.text;
+      if (typeof text === "string") {
+        sectionsText = text;
+      }
     }
   }
 
@@ -213,7 +182,7 @@ export async function runChecks(
   config: LensConfig,
 ): Promise<HookResult> {
   const startTime = Date.now();
-  const statuses: HookCheckStatuses = {
+  const statuses: CheckStatuses = {
     prettier: "skipped",
     linters: "skipped",
     lsp: "skipped",
@@ -288,7 +257,7 @@ function buildResultText(
   hasIssues: boolean,
   alwaysReport: boolean,
   sectionsText: string,
-  statuses: HookCheckStatuses,
+  statuses: CheckStatuses,
 ): string {
   if (!hasIssues && alwaysReport) {
     return formatSummaryLine(fileCount, durationMs, statuses);

@@ -261,4 +261,22 @@ describe("loadRendererSetting", () => {
     const result = loadRendererSetting();
     expect(result).toBe(false);
   });
+
+  it("warns on non-ENOENT read error for settings", async () => {
+    const { readFileSync } = await import("node:fs");
+    const err = new Error("permission denied") as NodeJS.ErrnoException;
+    err.code = "EACCES";
+    vi.mocked(readFileSync).mockImplementation(() => {
+      throw err;
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = loadRendererSetting();
+    expect(result).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("failed to read settings"),
+    );
+
+    warnSpy.mockRestore();
+  });
 });

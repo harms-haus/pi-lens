@@ -10,8 +10,7 @@
     "docs/",
     "skills/",
     "README.md",
-    "LICENSE",
-    "CHANGELOG.md"
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public"
@@ -32,7 +31,7 @@
     "url": "git+https://github.com/harms-haus/pi-lens.git"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "scripts": {
     "lint": "eslint src/",
@@ -49,8 +48,12 @@
       "./src/index.ts"
     ],
     "skills": [
-      "./skills"
+      "./skills/code-lens-explorer"
     ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
   },
   "dependencies": {
     "@harms-haus/code-lens": "^0.3.0"
@@ -58,14 +61,14 @@
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.74.0",
     "typebox": "^1.1.38",
-    "@eslint/js": "^9.0.0",
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.0.0",
-    "@vitest/coverage-v8": "^3.2.4",
-    "eslint": "^9.0.0",
+    "@vitest/coverage-v8": "^4.1.6",
+    "eslint": "^10.4.0",
     "eslint-config-prettier": "^10.1.8",
-    "prettier": "^3.0.0",
-    "typescript": "^5.0.0",
-    "typescript-eslint": "^8.0.0",
-    "vitest": "^3.0.0"
+    "prettier": "^3.8.3",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.59.3",
+    "vitest": "^4.1.6"
   }
 }

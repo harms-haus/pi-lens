@@ -10,3 +10,24 @@
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
+/**
+ * Map a check status to a unicode icon.
+ */
+export function statusToIcon(status: string): string {
+  switch (status) {
+    case "clean":
+      return "✅";
+    case "issues":
+      return "⚠";
+    case "error":
+      return "✗";
+    case "skipped":
+      return "⊘";
+    case "running":
+    case "pending":
+      return "●";
+    default:
+      return "●";
+  }
+}
