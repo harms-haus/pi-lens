@@ -1,6 +1,6 @@
 {
   "name": "@harms-haus/pi-lens",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "Unified code quality extension for pi — auto-runs prettier, linters, LSP diagnostics, and tsc on changed files",
   "type": "module",
   "main": "src/index.ts",
@@ -53,7 +53,7 @@
     ]
   },
   "dependencies": {
-    "@harms-haus/code-lens": "^0.2.2"
+    "@harms-haus/code-lens": "^0.3.0"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.74.0",
