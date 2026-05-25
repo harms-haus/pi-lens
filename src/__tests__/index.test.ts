@@ -941,7 +941,7 @@ describe("hasFileModifyingToolActivity edge cases", () => {
     expect(pi.exec).not.toHaveBeenCalled();
   });
 
-  it("window line with kind !== \"tool\" does not trigger check", async () => {
+  it('window line with kind !== "tool" does not trigger check', async () => {
     const { pi, handlers } = createMockPi();
     const ctx = createMockContext();
     extension(pi);
@@ -2039,7 +2039,12 @@ describe("sendDiagnosticMessage branches", () => {
 
     const handler = handlers.get("tool_result")!;
     await handler(
-      { toolName: "write", input: { path: "/home/user/project/src/foo.ts" }, content: [], isError: false },
+      {
+        toolName: "write",
+        input: { path: "/home/user/project/src/foo.ts" },
+        content: [],
+        isError: false,
+      },
       ctx,
     );
 
@@ -2066,7 +2071,12 @@ describe("sendDiagnosticMessage branches", () => {
 
     const handler = handlers.get("tool_result")!;
     await handler(
-      { toolName: "write", input: { path: "/home/user/project/src/foo.ts" }, content: [], isError: false },
+      {
+        toolName: "write",
+        input: { path: "/home/user/project/src/foo.ts" },
+        content: [],
+        isError: false,
+      },
       ctx,
     );
 
@@ -2093,7 +2103,12 @@ describe("sendDiagnosticMessage branches", () => {
 
     const handler = handlers.get("tool_result")!;
     await handler(
-      { toolName: "write", input: { path: "/home/user/project/src/foo.ts" }, content: [], isError: false },
+      {
+        toolName: "write",
+        input: { path: "/home/user/project/src/foo.ts" },
+        content: [],
+        isError: false,
+      },
       ctx,
     );
 

@@ -273,9 +273,7 @@ describe("loadRendererSetting", () => {
 
     const result = loadRendererSetting();
     expect(result).toBe(false);
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("failed to read settings"),
-    );
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("failed to read settings"));
 
     warnSpy.mockRestore();
   });

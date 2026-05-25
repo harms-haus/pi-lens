@@ -31,7 +31,14 @@ export interface LensConfig {
 }
 
 /** Status of a check */
-export const CHECK_STATUSES = ["pending", "running", "clean", "issues", "error", "skipped"] as const;
+export const CHECK_STATUSES = [
+  "pending",
+  "running",
+  "clean",
+  "issues",
+  "error",
+  "skipped",
+] as const;
 export type CheckStatus = (typeof CHECK_STATUSES)[number];
 
 export const VALID_CHECK_STATUSES: Set<CheckStatus> = new Set(CHECK_STATUSES);
