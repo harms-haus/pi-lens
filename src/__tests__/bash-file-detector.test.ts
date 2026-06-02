@@ -297,10 +297,7 @@ describe("detectFilesFromBashCommand", () => {
   // ── PowerShell: Set-Content ────────────────────────────────────────
   describe("PowerShell: Set-Content", () => {
     it("detects Set-Content -Path <file> -Value ... as written", () => {
-      const result = detectFilesFromBashCommand(
-        'Set-Content -Path output.txt -Value "hello"',
-        CWD,
-      );
+      const result = detectFilesFromBashCommand('Set-Content -Path output.txt -Value "hello"', CWD);
       expect(result.written).toContain(path.resolve(CWD, "output.txt"));
     });
 
@@ -326,10 +323,7 @@ describe("detectFilesFromBashCommand", () => {
   // ── PowerShell: Add-Content ─────────────────────────────────────────
   describe("PowerShell: Add-Content", () => {
     it("detects Add-Content -Path <file> as written", () => {
-      const result = detectFilesFromBashCommand(
-        'Add-Content -Path log.txt -Value "line"',
-        CWD,
-      );
+      const result = detectFilesFromBashCommand('Add-Content -Path log.txt -Value "line"', CWD);
       expect(result.written).toContain(path.resolve(CWD, "log.txt"));
     });
 
@@ -391,10 +385,7 @@ describe("detectFilesFromBashCommand", () => {
   // ── PowerShell: New-Item ────────────────────────────────────────────
   describe("PowerShell: New-Item", () => {
     it("detects New-Item -Path <file> -ItemType File as written", () => {
-      const result = detectFilesFromBashCommand(
-        "New-Item -Path newfile.txt -ItemType File",
-        CWD,
-      );
+      const result = detectFilesFromBashCommand("New-Item -Path newfile.txt -ItemType File", CWD);
       expect(result.written).toContain(path.resolve(CWD, "newfile.txt"));
     });
 

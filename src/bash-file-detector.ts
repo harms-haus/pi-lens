@@ -170,7 +170,8 @@ const PATTERNS: PatternDef[] = [
 
   // PowerShell: Set-Content <file> (positional, no -Path)
   {
-    regex: /\bSet-Content\s+(?![^;]*?(?:-Path)\s)(?:-[A-Za-z][\w-]*\s+\S+\s+)*['"]?([^\s;|&'"]+)['"]?/gi,
+    regex:
+      /\bSet-Content\s+(?![^;]*?(?:-Path)\s)(?:-[A-Za-z][\w-]*\s+\S+\s+)*['"]?([^\s;|&'"]+)['"]?/gi,
     writtenGroups: [1],
     readGroups: [],
   },
@@ -184,7 +185,8 @@ const PATTERNS: PatternDef[] = [
 
   // PowerShell: Out-File <file> (positional, no -FilePath)
   {
-    regex: /\bOut-File\s+(?![^;]*?(?:-FilePath)\s)(?:-[A-Za-z][\w-]*\s+\S+\s+)*['"]?([^\s;|&'"]+)['"]?/gi,
+    regex:
+      /\bOut-File\s+(?![^;]*?(?:-FilePath)\s)(?:-[A-Za-z][\w-]*\s+\S+\s+)*['"]?([^\s;|&'"]+)['"]?/gi,
     writtenGroups: [1],
     readGroups: [],
   },
@@ -198,35 +200,40 @@ const PATTERNS: PatternDef[] = [
 
   // PowerShell: Add-Content <file> (positional, no -Path)
   {
-    regex: /\bAdd-Content\s+(?![^;]*?(?:-Path)\s)(?:-[A-Za-z][\w-]*\s+\S+\s+)*['"]?([^\s;|&'"]+)['"]?/gi,
+    regex:
+      /\bAdd-Content\s+(?![^;]*?(?:-Path)\s)(?:-[A-Za-z][\w-]*\s+\S+\s+)*['"]?([^\s;|&'"]+)['"]?/gi,
     writtenGroups: [1],
     readGroups: [],
   },
 
   // PowerShell: Copy-Item -Path <src> -Destination <dst> (named)
   {
-    regex: /\bCopy-Item\b[^;]*?(?:-Path)\s+['"]?([^\s;|&'"]+)['"]?[^;]*?(?:-Destination)\s+['"]?([^\s;|&'"]+)['"]?/gi,
+    regex:
+      /\bCopy-Item\b[^;]*?(?:-Path)\s+['"]?([^\s;|&'"]+)['"]?[^;]*?(?:-Destination)\s+['"]?([^\s;|&'"]+)['"]?/gi,
     writtenGroups: [2],
     readGroups: [1],
   },
 
   // PowerShell: Copy-Item <src> <dst> (positional, no -Path/-Destination)
   {
-    regex: /\bCopy-Item\s+(?![^;]*?(?:-Path|-Destination)\s)(?:-[A-Za-z][\w-]*\s+\S+\s+)*['"]?([^\s;|&'"]+)['"]?\s+['"]?([^\s;|&'"]+)['"]?/gi,
+    regex:
+      /\bCopy-Item\s+(?![^;]*?(?:-Path|-Destination)\s)(?:-[A-Za-z][\w-]*\s+\S+\s+)*['"]?([^\s;|&'"]+)['"]?\s+['"]?([^\s;|&'"]+)['"]?/gi,
     writtenGroups: [2],
     readGroups: [1],
   },
 
   // PowerShell: Move-Item -Path <src> -Destination <dst> (named)
   {
-    regex: /\bMove-Item\b[^;]*?(?:-Path)\s+['"]?([^\s;|&'"]+)['"]?[^;]*?(?:-Destination)\s+['"]?([^\s;|&'"]+)['"]?/gi,
+    regex:
+      /\bMove-Item\b[^;]*?(?:-Path)\s+['"]?([^\s;|&'"]+)['"]?[^;]*?(?:-Destination)\s+['"]?([^\s;|&'"]+)['"]?/gi,
     writtenGroups: [2],
     readGroups: [1],
   },
 
   // PowerShell: Move-Item <src> <dst> (positional, no -Path/-Destination)
   {
-    regex: /\bMove-Item\s+(?![^;]*?(?:-Path|-Destination)\s)(?:-[A-Za-z][\w-]*\s+\S+\s+)*['"]?([^\s;|&'"]+)['"]?\s+['"]?([^\s;|&'"]+)['"]?/gi,
+    regex:
+      /\bMove-Item\s+(?![^;]*?(?:-Path|-Destination)\s)(?:-[A-Za-z][\w-]*\s+\S+\s+)*['"]?([^\s;|&'"]+)['"]?\s+['"]?([^\s;|&'"]+)['"]?/gi,
     writtenGroups: [2],
     readGroups: [1],
   },
@@ -240,7 +247,8 @@ const PATTERNS: PatternDef[] = [
 
   // PowerShell: New-Item <file> (positional, no -Path)
   {
-    regex: /\bNew-Item\s+(?![^;]*?(?:-Path)\s)(?:-[A-Za-z][\w-]*\s+\S+\s+)*['"]?([^\s;|&'"]+)['"]?/gi,
+    regex:
+      /\bNew-Item\s+(?![^;]*?(?:-Path)\s)(?:-[A-Za-z][\w-]*\s+\S+\s+)*['"]?([^\s;|&'"]+)['"]?/gi,
     writtenGroups: [1],
     readGroups: [],
   },
