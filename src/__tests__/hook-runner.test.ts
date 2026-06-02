@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as path from "node:path";
+import * as os from "node:os";
 
 // Mock node:fs for resolveFilesFromToolResult (existsSync check)
 vi.mock("node:fs", () => ({
@@ -27,7 +28,15 @@ import type { HookCheckStatuses } from "../hook-runner.js";
 import { detectFilesFromBashCommand } from "../bash-file-detector.js";
 import { sendRequest, getSocketPath } from "@harms-haus/code-lens/client";
 
-const CWD = "/home/user/project";
+/** Platform-aware CWD that resolves to a real absolute path on any OS */
+const CWD = path.join(os.tmpdir(), "pi-lens-test-project");
+/** Helper to build an absolute path under CWD with forward slashes */
+function cwdPath(...segments: string[]): string {
+  return path
+    .resolve(CWD, ...segments)
+    .split(path.sep)
+    .join("/");
+}
 
 const baseConfig: LensConfig = {
   prettier: false,
@@ -56,12 +65,8 @@ describe("resolveFilesFromToolResult", () => {
     const { existsSync } = await import("node:fs");
     vi.mocked(existsSync).mockReturnValue(true);
 
-    const result = resolveFilesFromToolResult(
-      "write",
-      { path: "/home/user/project/src/foo.ts" },
-      CWD,
-    );
-    expect(result).toEqual(["/home/user/project/src/foo.ts"]);
+    const result = resolveFilesFromToolResult("write", { path: cwdPath("src", "foo.ts") }, CWD);
+    expect(result).toEqual([cwdPath("src", "foo.ts")]);
   });
 
   it("resolves write tool with relative path against cwd", async () => {
@@ -69,19 +74,15 @@ describe("resolveFilesFromToolResult", () => {
     vi.mocked(existsSync).mockReturnValue(true);
 
     const result = resolveFilesFromToolResult("write", { path: "src/foo.ts" }, CWD);
-    expect(result).toEqual([path.normalize(path.resolve(CWD, "src/foo.ts"))]);
+    expect(result).toEqual([cwdPath("src", "foo.ts")]);
   });
 
   it("resolves edit tool with path", async () => {
     const { existsSync } = await import("node:fs");
     vi.mocked(existsSync).mockReturnValue(true);
 
-    const result = resolveFilesFromToolResult(
-      "edit",
-      { path: "/home/user/project/src/bar.ts" },
-      CWD,
-    );
-    expect(result).toEqual(["/home/user/project/src/bar.ts"]);
+    const result = resolveFilesFromToolResult("edit", { path: cwdPath("src", "bar.ts") }, CWD);
+    expect(result).toEqual([cwdPath("src", "bar.ts")]);
   });
 
   it("resolves bash tool via detectFilesFromBashCommand", async () => {
@@ -97,7 +98,7 @@ describe("resolveFilesFromToolResult", () => {
       { command: "sed -i 's/a/b/g' modified.txt" },
       CWD,
     );
-    expect(result).toEqual([path.resolve(CWD, "modified.txt")]);
+    expect(result).toEqual([cwdPath("modified.txt")]);
   });
 
   it("returns empty array for bash tool with no file operations", () => {
@@ -124,23 +125,19 @@ describe("resolveFilesFromToolResult", () => {
     const { existsSync } = await import("node:fs");
     vi.mocked(existsSync).mockReturnValueOnce(true).mockReturnValueOnce(false);
     vi.mocked(detectFilesFromBashCommand).mockReturnValue({
-      written: ["/home/user/project/exists.txt", "/home/user/project/missing.txt"],
+      written: [cwdPath("exists.txt"), cwdPath("missing.txt")],
       read: [],
     });
 
     const result = resolveFilesFromToolResult("bash", { command: "cmd" }, CWD);
-    expect(result).toEqual(["/home/user/project/exists.txt"]);
+    expect(result).toEqual([cwdPath("exists.txt")]);
   });
 
   it("deduplicates file paths", async () => {
     const { existsSync } = await import("node:fs");
     vi.mocked(existsSync).mockReturnValue(true);
 
-    const result = resolveFilesFromToolResult(
-      "write",
-      { path: "/home/user/project/src/foo.ts" },
-      CWD,
-    );
+    const result = resolveFilesFromToolResult("write", { path: cwdPath("src", "foo.ts") }, CWD);
     // Should not duplicate even if called with same path
     expect(result).toHaveLength(1);
   });
@@ -155,7 +152,11 @@ describe("resolveFilesFromToolResult", () => {
   it("filters out absolute paths outside cwd", async () => {
     const { existsSync } = await import("node:fs");
     vi.mocked(existsSync).mockReturnValue(true);
-    const result = resolveFilesFromToolResult("write", { path: "/etc/passwd" }, CWD);
+    const result = resolveFilesFromToolResult(
+      "write",
+      { path: path.resolve(os.tmpdir(), "other-project", "secret.txt") },
+      CWD,
+    );
     expect(result).toEqual([]);
   });
 
@@ -208,7 +209,7 @@ describe("runChecks", () => {
   it("returns clean message when daemon reports all checks skipped", async () => {
     mockFullCheckResponse({});
 
-    const result = await runChecks(["/home/user/project/src/foo.ts"], CWD, baseConfig);
+    const result = await runChecks([cwdPath("src", "foo.ts")], CWD, baseConfig);
     expect(result.text).toContain("pi-lens");
     expect(result.text).toContain("⊘ prettier");
     expect(result.statuses.prettier).toBe("skipped");
@@ -221,7 +222,7 @@ describe("runChecks", () => {
     mockFullCheckResponse({});
     const config = { ...baseConfig, prettier: true, linters: true, lsp: true, tsc: true };
 
-    await runChecks(["/home/user/project/src/foo.ts"], CWD, config);
+    await runChecks([cwdPath("src", "foo.ts")], CWD, config);
 
     expect(getSocketPath).toHaveBeenCalledWith(CWD);
     expect(sendRequest).toHaveBeenCalledWith(
@@ -230,7 +231,7 @@ describe("runChecks", () => {
         jsonrpc: "2.0",
         method: "fullCheck",
         params: expect.objectContaining({
-          files: ["/home/user/project/src/foo.ts"],
+          files: [cwdPath("src", "foo.ts")],
           config: expect.objectContaining({
             prettier: true,
             linters: true,
@@ -254,7 +255,7 @@ describe("runChecks", () => {
       text: "  ⚠ prettier: 1 file(s) need formatting\n    src/foo.ts",
     });
 
-    const result = await runChecks(["/home/user/project/src/foo.ts"], CWD, baseConfig);
+    const result = await runChecks([cwdPath("src", "foo.ts")], CWD, baseConfig);
     expect(result.statuses.prettier).toBe("issues");
     expect(result.statuses.linters).toBe("clean");
     expect(result.text).toContain("pi-lens");
@@ -273,7 +274,7 @@ describe("runChecks", () => {
       text: "  ✅ prettier: 1 file(s) formatted correctly\n  ⚠ linters: 1 error(s)\n  ✅ lsp: 0 diagnostics\n  ⚠ tsc: 2 error(s)",
     });
 
-    const result = await runChecks(["/home/user/project/src/foo.ts"], CWD, baseConfig);
+    const result = await runChecks([cwdPath("src", "foo.ts")], CWD, baseConfig);
     expect(result.statuses.prettier).toBe("clean");
     expect(result.statuses.linters).toBe("issues");
     expect(result.statuses.lsp).toBe("clean");
@@ -285,35 +286,35 @@ describe("runChecks", () => {
     const config = { ...baseConfig, alwaysReport: false };
     mockFullCheckResponse({ hasIssues: false });
 
-    const result = await runChecks(["/home/user/project/src/foo.ts"], CWD, config);
+    const result = await runChecks([cwdPath("src", "foo.ts")], CWD, config);
     expect(result.text).toBe("");
   });
 
   it("returns empty text when daemon returns error", async () => {
     mockFullCheckResponse({ isError: true });
 
-    const result = await runChecks(["/home/user/project/src/foo.ts"], CWD, baseConfig);
+    const result = await runChecks([cwdPath("src", "foo.ts")], CWD, baseConfig);
     expect(result.text).toBe("");
   });
 
   it("returns empty text when sendRequest throws", async () => {
     vi.mocked(sendRequest).mockRejectedValue(new Error("daemon error"));
 
-    const result = await runChecks(["/home/user/project/src/foo.ts"], CWD, baseConfig);
+    const result = await runChecks([cwdPath("src", "foo.ts")], CWD, baseConfig);
     expect(result.text).toBe("");
   });
 
   it("includes duration in result", async () => {
     mockFullCheckResponse({});
 
-    const result = await runChecks(["/home/user/project/src/foo.ts"], CWD, baseConfig);
+    const result = await runChecks([cwdPath("src", "foo.ts")], CWD, baseConfig);
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
   });
 
   it("returns empty text when no files after filtering", async () => {
     const config = { ...baseConfig, excludePatterns: ["**/*.ts"] };
 
-    const result = await runChecks(["/home/user/project/src/foo.ts"], CWD, config);
+    const result = await runChecks([cwdPath("src", "foo.ts")], CWD, config);
     expect(result.text).toBe("");
     expect(sendRequest).not.toHaveBeenCalled();
   });
@@ -337,7 +338,7 @@ describe("runChecks", () => {
     const { existsSync } = await import("node:fs");
     vi.mocked(existsSync).mockReturnValue(true);
     vi.mocked(detectFilesFromBashCommand).mockReturnValue({
-      written: ["/home/user/project/src/foo.ts", "/home/user/project/src/foo.ts"],
+      written: [cwdPath("src", "foo.ts"), cwdPath("src", "foo.ts")],
       read: [],
     });
 
@@ -351,7 +352,7 @@ describe("runChecks", () => {
       throw new Error("permission denied");
     });
     vi.mocked(detectFilesFromBashCommand).mockReturnValue({
-      written: ["/home/user/project/src/foo.ts"],
+      written: [cwdPath("src", "foo.ts")],
       read: [],
     });
 
@@ -370,7 +371,7 @@ describe("runChecks", () => {
       },
     });
 
-    const result = await runChecks(["/home/user/project/src/foo.ts"], CWD, baseConfig);
+    const result = await runChecks([cwdPath("src", "foo.ts")], CWD, baseConfig);
     expect(result.statuses.prettier).toBe("skipped");
     expect(result.statuses.linters).toBe("skipped");
     expect(result.statuses.lsp).toBe("skipped");
@@ -390,7 +391,7 @@ describe("parseDaemonResponse edge cases (via runChecks)", () => {
       isError: false,
       content: [{ type: "text" as const, text: "" }],
     } as never);
-    const result = await runChecks(["/home/user/project/src/foo.ts"], CWD, baseConfig);
+    const result = await runChecks([cwdPath("src", "foo.ts")], CWD, baseConfig);
     expect(result.statuses.prettier).toBe("skipped");
   });
 
@@ -400,7 +401,7 @@ describe("parseDaemonResponse edge cases (via runChecks)", () => {
       content: [{ type: "text" as const, text: "" }],
       details: "not-an-object" as unknown as Record<string, unknown>,
     });
-    const result = await runChecks(["/home/user/project/src/foo.ts"], CWD, baseConfig);
+    const result = await runChecks([cwdPath("src", "foo.ts")], CWD, baseConfig);
     expect(result.statuses.prettier).toBe("skipped");
   });
 
@@ -413,7 +414,7 @@ describe("parseDaemonResponse edge cases (via runChecks)", () => {
         hasIssues: "yes",
       },
     });
-    const result = await runChecks(["/home/user/project/src/foo.ts"], CWD, baseConfig);
+    const result = await runChecks([cwdPath("src", "foo.ts")], CWD, baseConfig);
     // hasIssues is not boolean true → treated as false
     expect(result.text).toContain("pi-lens");
     expect(result.text).toContain("✅ prettier");
@@ -428,7 +429,7 @@ describe("parseDaemonResponse edge cases (via runChecks)", () => {
         hasIssues: false,
       },
     });
-    const result = await runChecks(["/home/user/project/src/foo.ts"], CWD, baseConfig);
+    const result = await runChecks([cwdPath("src", "foo.ts")], CWD, baseConfig);
     expect(result.statuses.prettier).toBe("skipped");
     expect(result.statuses.linters).toBe("skipped");
     expect(result.statuses.lsp).toBe("skipped");
@@ -444,7 +445,7 @@ describe("parseDaemonResponse edge cases (via runChecks)", () => {
         hasIssues: true,
       },
     });
-    const result = await runChecks(["/home/user/project/src/foo.ts"], CWD, baseConfig);
+    const result = await runChecks([cwdPath("src", "foo.ts")], CWD, baseConfig);
     expect(result.text).toContain("pi-lens");
   });
 });
@@ -485,12 +486,12 @@ describe("formatSummaryLine", () => {
 
 describe("filterFilesByPatterns", () => {
   const files = [
-    `${CWD}/src/index.ts`,
-    `${CWD}/src/utils/helpers.ts`,
-    `${CWD}/src/components/App.tsx`,
-    `${CWD}/test/main.test.ts`,
-    `${CWD}/node_modules/lodash/index.js`,
-    `${CWD}/dist/bundle.js`,
+    cwdPath("src", "index.ts"),
+    cwdPath("src", "utils", "helpers.ts"),
+    cwdPath("src", "components", "App.tsx"),
+    cwdPath("test", "main.test.ts"),
+    cwdPath("node_modules", "lodash", "index.js"),
+    cwdPath("dist", "bundle.js"),
   ];
 
   it("returns all files when no include or exclude patterns specified", () => {
@@ -501,42 +502,42 @@ describe("filterFilesByPatterns", () => {
   it("filters to files matching include patterns", () => {
     const result = filterFilesByPatterns(files, CWD, ["src/**"], []);
     expect(result).toEqual([
-      `${CWD}/src/index.ts`,
-      `${CWD}/src/utils/helpers.ts`,
-      `${CWD}/src/components/App.tsx`,
+      cwdPath("src", "index.ts"),
+      cwdPath("src", "utils", "helpers.ts"),
+      cwdPath("src", "components", "App.tsx"),
     ]);
   });
 
   it("excludes files matching exclude patterns", () => {
     const result = filterFilesByPatterns(files, CWD, [], ["node_modules/**"]);
     expect(result).toEqual([
-      `${CWD}/src/index.ts`,
-      `${CWD}/src/utils/helpers.ts`,
-      `${CWD}/src/components/App.tsx`,
-      `${CWD}/test/main.test.ts`,
-      `${CWD}/dist/bundle.js`,
+      cwdPath("src", "index.ts"),
+      cwdPath("src", "utils", "helpers.ts"),
+      cwdPath("src", "components", "App.tsx"),
+      cwdPath("test", "main.test.ts"),
+      cwdPath("dist", "bundle.js"),
     ]);
   });
 
   it("exclude takes precedence over include", () => {
     const result = filterFilesByPatterns(files, CWD, ["src/**"], ["**/*.tsx"]);
     // src/App.tsx is included by src/** but excluded by **/*.tsx
-    expect(result).toEqual([`${CWD}/src/index.ts`, `${CWD}/src/utils/helpers.ts`]);
+    expect(result).toEqual([cwdPath("src", "index.ts"), cwdPath("src", "utils", "helpers.ts")]);
   });
 
   it("matches globstar ** patterns across directories", () => {
     const result = filterFilesByPatterns(files, CWD, ["**/*.ts"], []);
     expect(result).toEqual([
-      `${CWD}/src/index.ts`,
-      `${CWD}/src/utils/helpers.ts`,
-      `${CWD}/test/main.test.ts`,
+      cwdPath("src", "index.ts"),
+      cwdPath("src", "utils", "helpers.ts"),
+      cwdPath("test", "main.test.ts"),
     ]);
   });
 
   it("matches * wildcard for single path segment", () => {
     const result = filterFilesByPatterns(files, CWD, ["src/*.ts"], []);
     // Only direct children of src/ with .ts extension
-    expect(result).toEqual([`${CWD}/src/index.ts`]);
+    expect(result).toEqual([cwdPath("src", "index.ts")]);
   });
 
   it("handles calling with same patterns twice (cache hit — no error)", () => {
@@ -547,9 +548,9 @@ describe("filterFilesByPatterns", () => {
     const result2 = filterFilesByPatterns(files, CWD, patterns, []);
     expect(result1).toEqual(result2);
     expect(result2).toEqual([
-      `${CWD}/src/index.ts`,
-      `${CWD}/src/utils/helpers.ts`,
-      `${CWD}/src/components/App.tsx`,
+      cwdPath("src", "index.ts"),
+      cwdPath("src", "utils", "helpers.ts"),
+      cwdPath("src", "components", "App.tsx"),
     ]);
   });
 });
