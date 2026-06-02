@@ -7,7 +7,7 @@ Deep-dive technical reference for the **pi-lens** extension and its companion **
 pi-lens is a thin client extension for the pi coding agent. It detects files changed by the agent and delegates all code quality checking to a long-running **@harms-haus/code-lens** daemon process. The two components communicate over a Unix domain socket (or named pipe on Windows) using JSON-RPC.
 
 ```
-┌──────────────────────┐         Unix socket          ┌─────────────────────────────┐
+┌──────────────────────┐    Unix socket / named pipe    ┌─────────────────────────────┐
 │  pi-lens (extension) │  ──── fullCheck request ───►  │  @harms-haus/code-lens      │
 │                      │                                │  (daemon)                   │
 │  • Hook registration │  ◄── JSON-RPC response ─────  │                             │
@@ -145,7 +145,7 @@ The core orchestration module. Responsible for:
 
 2. **File filtering** — `filterFilesByPatterns()` applies `includePatterns`/`excludePatterns` from config using compiled glob regexes (cached for the session).
 
-3. **Daemon communication** — `runChecks()` sends a `fullCheck` JSON-RPC request to the daemon over the Unix socket. Response parsing is delegated to `parseDaemonResponse()`, which validates the response structure using `isRecord()` type guards and extracts per-check statuses, issue flags, and formatted text.
+3. **Daemon communication** — `runChecks()` sends a `fullCheck` JSON-RPC request to the daemon over the Unix socket (or Windows named pipe). Response parsing is delegated to `parseDaemonResponse()`, which validates the response structure using `isRecord()` type guards and extracts per-check statuses, issue flags, and formatted text.
 
 4. **Result formatting** — Builds the final text to append to the tool result, including a header with file count and duration.
 
@@ -185,9 +185,9 @@ Also exports **`loadRendererSetting()`** — reads the `piLensRenderer` boolean 
 
 ### `bash-file-detector.ts` — Bash Command Analysis
 
-Regex-based analysis of bash command strings to detect file-writing patterns. Runs client-side because it operates on the raw tool result before any daemon communication.
+Regex-based analysis of bash and PowerShell command strings to detect file-writing patterns. Runs client-side because it operates on the raw tool result before any daemon communication.
 
-Supports: `sed -i`, `cat >`, `echo >`, `tee`, `perl -i`, `awk >`, `python -c >`, `dd of=`, `mv`, `cp`, and generic shell redirects (`>`/`>>`).
+Supports: `sed -i`, `cat >`, `echo >`, `tee`, `perl -i`, `awk >`, `python -c >`, `dd of=`, `mv`, `cp`, generic shell redirects (`>`/`>>`), and PowerShell cmdlets (`Set-Content`, `Out-File`, `Add-Content`, `Copy-Item`, `Move-Item`, `New-Item`).
 
 ---
 
@@ -220,7 +220,7 @@ Agent calls write/edit/bash tool
                ├─ filterFilesByPatterns()
                │     └─ Apply include/exclude glob patterns (cached regex)
                │
-               ├─ getSocketPath(cwd) → Unix socket path
+               ├─ getSocketPath(cwd) → socket/pipe path
                │
                ├─ sendRequest(socketPath, {
                │     jsonrpc: "2.0",
@@ -447,7 +447,7 @@ Called during `session_shutdown`:
 
 ### Daemon Communication Protocol
 
-Requests are sent as single-line JSON (NDJSON) over the Unix socket:
+Requests are sent as single-line JSON (NDJSON) over the Unix socket (or Windows named pipe):
 
 ```json
 {
@@ -509,7 +509,7 @@ This ensures pi-lens is purely advisory — it can never break the agent's prima
 
 ## 7. Bash File Detection
 
-`bash-file-detector.ts` analyzes bash command strings to detect file-writing patterns. This runs client-side because it operates on the raw tool result before any daemon communication.
+`bash-file-detector.ts` analyzes bash and PowerShell command strings to detect file-writing patterns. This runs client-side because it operates on the raw tool result before any daemon communication.
 
 ### Supported Patterns
 
@@ -527,6 +527,12 @@ This ensures pi-lens is purely advisory — it can never break the agent's prima
 | `mv src dst`                 | `mv` command                  | Written: `dst`, Read: `src` |
 | `cp src dst`                 | `cp` command                  | Written: `dst`, Read: `src` |
 | `> file` / `>> file`         | Generic redirect (fallback)   | Written: `file`             |
+| `Set-Content -Path file`     | PowerShell `Set-Content`      | Written: `file`             |
+| `Out-File -FilePath file`    | PowerShell `Out-File`         | Written: `file`             |
+| `Add-Content -Path file`     | PowerShell `Add-Content`      | Written: `file`             |
+| `Copy-Item src -Destination dst` | PowerShell `Copy-Item`   | Written: `dst`, Read: `src` |
+| `Move-Item src -Destination dst` | PowerShell `Move-Item`   | Written: `dst`, Read: `src` |
+| `New-Item -Path file`        | PowerShell `New-Item`         | Written: `file`             |
 
 ### Multi-Command Handling
 
@@ -537,6 +543,8 @@ echo "a" > a.txt && echo "b" > b.txt
 ```
 
 Produces: `written: [a.txt, b.txt]`
+
+PowerShell pipelines are also handled — semicolons and newlines are used as delimiters for PowerShell commands.
 
 ### Limitations
 

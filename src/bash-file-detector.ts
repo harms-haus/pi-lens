@@ -3,7 +3,7 @@
  *
  * Detects which files are affected by a bash command by analyzing the command
  * string for common file-writing patterns (sed, cat, echo, tee, perl, awk,
- * python, dd, mv, cp, shell redirects).
+ * python, dd, mv, cp, shell redirects, PowerShell cmdlets).
  *
  * IMPORTANT: This is BEST-EFFORT detection. Bash command analysis is inherently
  * limited — it cannot handle:
@@ -154,6 +154,95 @@ const PATTERNS: PatternDef[] = [
     regex: /\bcp\s+(?:-[a-zA-Z]+\s+)*['"]?([^\s;|&'"]+)['"]?\s+['"]?([^\s;|&'"]+)['"]?/g,
     writtenGroups: [2],
     readGroups: [1],
+  },
+
+  // ── PowerShell Cmdlets ──────────────────────────────────────────────
+  // Each PowerShell command has a named-parameter form and a positional form.
+  // Named forms look for explicit -Path, -FilePath, or -Destination flags.
+  // Positional forms match when those named flags are absent.
+
+  // PowerShell: Set-Content -Path <file> (named)
+  {
+    regex: /\bSet-Content\b[^;]*?(?:-Path)\s+['"]?([^\s;|&'"]+)['"]?/gi,
+    writtenGroups: [1],
+    readGroups: [],
+  },
+
+  // PowerShell: Set-Content <file> (positional, no -Path)
+  {
+    regex: /\bSet-Content\s+(?![^;]*?(?:-Path)\s)(?:-[A-Za-z][\w-]*\s+\S+\s+)*['"]?([^\s;|&'"]+)['"]?/gi,
+    writtenGroups: [1],
+    readGroups: [],
+  },
+
+  // PowerShell: Out-File -FilePath <file> (named)
+  {
+    regex: /\bOut-File\b[^;]*?(?:-FilePath)\s+['"]?([^\s;|&'"]+)['"]?/gi,
+    writtenGroups: [1],
+    readGroups: [],
+  },
+
+  // PowerShell: Out-File <file> (positional, no -FilePath)
+  {
+    regex: /\bOut-File\s+(?![^;]*?(?:-FilePath)\s)(?:-[A-Za-z][\w-]*\s+\S+\s+)*['"]?([^\s;|&'"]+)['"]?/gi,
+    writtenGroups: [1],
+    readGroups: [],
+  },
+
+  // PowerShell: Add-Content -Path <file> (named)
+  {
+    regex: /\bAdd-Content\b[^;]*?(?:-Path)\s+['"]?([^\s;|&'"]+)['"]?/gi,
+    writtenGroups: [1],
+    readGroups: [],
+  },
+
+  // PowerShell: Add-Content <file> (positional, no -Path)
+  {
+    regex: /\bAdd-Content\s+(?![^;]*?(?:-Path)\s)(?:-[A-Za-z][\w-]*\s+\S+\s+)*['"]?([^\s;|&'"]+)['"]?/gi,
+    writtenGroups: [1],
+    readGroups: [],
+  },
+
+  // PowerShell: Copy-Item -Path <src> -Destination <dst> (named)
+  {
+    regex: /\bCopy-Item\b[^;]*?(?:-Path)\s+['"]?([^\s;|&'"]+)['"]?[^;]*?(?:-Destination)\s+['"]?([^\s;|&'"]+)['"]?/gi,
+    writtenGroups: [2],
+    readGroups: [1],
+  },
+
+  // PowerShell: Copy-Item <src> <dst> (positional, no -Path/-Destination)
+  {
+    regex: /\bCopy-Item\s+(?![^;]*?(?:-Path|-Destination)\s)(?:-[A-Za-z][\w-]*\s+\S+\s+)*['"]?([^\s;|&'"]+)['"]?\s+['"]?([^\s;|&'"]+)['"]?/gi,
+    writtenGroups: [2],
+    readGroups: [1],
+  },
+
+  // PowerShell: Move-Item -Path <src> -Destination <dst> (named)
+  {
+    regex: /\bMove-Item\b[^;]*?(?:-Path)\s+['"]?([^\s;|&'"]+)['"]?[^;]*?(?:-Destination)\s+['"]?([^\s;|&'"]+)['"]?/gi,
+    writtenGroups: [2],
+    readGroups: [1],
+  },
+
+  // PowerShell: Move-Item <src> <dst> (positional, no -Path/-Destination)
+  {
+    regex: /\bMove-Item\s+(?![^;]*?(?:-Path|-Destination)\s)(?:-[A-Za-z][\w-]*\s+\S+\s+)*['"]?([^\s;|&'"]+)['"]?\s+['"]?([^\s;|&'"]+)['"]?/gi,
+    writtenGroups: [2],
+    readGroups: [1],
+  },
+
+  // PowerShell: New-Item -Path <file> (named)
+  {
+    regex: /\bNew-Item\b[^;]*?(?:-Path)\s+['"]?([^\s;|&'"]+)['"]?/gi,
+    writtenGroups: [1],
+    readGroups: [],
+  },
+
+  // PowerShell: New-Item <file> (positional, no -Path)
+  {
+    regex: /\bNew-Item\s+(?![^;]*?(?:-Path)\s)(?:-[A-Za-z][\w-]*\s+\S+\s+)*['"]?([^\s;|&'"]+)['"]?/gi,
+    writtenGroups: [1],
+    readGroups: [],
   },
 ];
 

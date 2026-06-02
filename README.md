@@ -200,7 +200,7 @@ tool_result event
   │
   ├─ Filter files by include/exclude patterns
   │
-  └─ Send fullCheck request to code-lens daemon (via Unix socket)
+  └─ Send fullCheck request to code-lens daemon (via Unix socket / named pipe)
         │
         │  Daemon runs all checks concurrently:
         ├─ Prettier — check formatting (report-only)
@@ -214,7 +214,7 @@ tool_result event
 ### Daemon lifecycle
 
 - **Session start**: `ensureDaemon()` starts or connects to the code-lens daemon for the project directory
-- **Per check**: `runChecks()` sends a single `fullCheck` JSON-RPC request over a Unix socket. The daemon runs all four check types concurrently and returns formatted results plus per-check statuses
+- **Per check**: `runChecks()` sends a single `fullCheck` JSON-RPC request over a Unix socket (or Windows named pipe). The daemon runs all four check types concurrently and returns formatted results plus per-check statuses
 - **Session shutdown**: `stopDaemon()` stops the daemon process
 
 ### Subagent monitoring
@@ -307,7 +307,7 @@ The status bar updates after session start and after every check run. Identical 
 
 ## Architecture
 
-pi-lens is a thin client that delegates all check execution to the `@harms-haus/code-lens` daemon. The daemon is a companion package that handles prettier, linters, LSP, and tsc — pi-lens only resolves files, loads config, and communicates with the daemon over a Unix socket.
+pi-lens is a thin client that delegates all check execution to the `@harms-haus/code-lens` daemon. The daemon is a companion package that handles prettier, linters, LSP, and tsc — pi-lens only resolves files, loads config, and communicates with the daemon over a Unix socket (or Windows named pipe).
 
 ```
 pi-lens/

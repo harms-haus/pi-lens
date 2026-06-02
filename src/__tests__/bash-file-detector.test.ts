@@ -294,6 +294,116 @@ describe("detectFilesFromBashCommand", () => {
     });
   });
 
+  // ── PowerShell: Set-Content ────────────────────────────────────────
+  describe("PowerShell: Set-Content", () => {
+    it("detects Set-Content -Path <file> -Value ... as written", () => {
+      const result = detectFilesFromBashCommand(
+        'Set-Content -Path output.txt -Value "hello"',
+        CWD,
+      );
+      expect(result.written).toContain(path.resolve(CWD, "output.txt"));
+    });
+
+    it("detects Set-Content <file> (positional) as written", () => {
+      const result = detectFilesFromBashCommand('Set-Content output.txt "hello"', CWD);
+      expect(result.written).toContain(path.resolve(CWD, "output.txt"));
+    });
+  });
+
+  // ── PowerShell: Out-File ────────────────────────────────────────────
+  describe("PowerShell: Out-File", () => {
+    it("detects Out-File -FilePath <file> as written", () => {
+      const result = detectFilesFromBashCommand("Out-File -FilePath log.txt", CWD);
+      expect(result.written).toContain(path.resolve(CWD, "log.txt"));
+    });
+
+    it("detects Out-File <file> (positional) as written", () => {
+      const result = detectFilesFromBashCommand("Out-File log.txt", CWD);
+      expect(result.written).toContain(path.resolve(CWD, "log.txt"));
+    });
+  });
+
+  // ── PowerShell: Add-Content ─────────────────────────────────────────
+  describe("PowerShell: Add-Content", () => {
+    it("detects Add-Content -Path <file> as written", () => {
+      const result = detectFilesFromBashCommand(
+        'Add-Content -Path log.txt -Value "line"',
+        CWD,
+      );
+      expect(result.written).toContain(path.resolve(CWD, "log.txt"));
+    });
+
+    it("detects Add-Content <file> (positional) as written", () => {
+      const result = detectFilesFromBashCommand('Add-Content log.txt "line"', CWD);
+      expect(result.written).toContain(path.resolve(CWD, "log.txt"));
+    });
+  });
+
+  // ── PowerShell: Copy-Item ───────────────────────────────────────────
+  describe("PowerShell: Copy-Item", () => {
+    it("detects Copy-Item -Path <src> -Destination <dst> — dst written, src read", () => {
+      const result = detectFilesFromBashCommand(
+        "Copy-Item -Path src.txt -Destination dest.txt",
+        CWD,
+      );
+      expect(result.written).toContain(path.resolve(CWD, "dest.txt"));
+      expect(result.read).toContain(path.resolve(CWD, "src.txt"));
+    });
+
+    it("detects Copy-Item <src> <dst> (positional) — dst written, src read", () => {
+      const result = detectFilesFromBashCommand("Copy-Item src.txt dest.txt", CWD);
+      expect(result.written).toContain(path.resolve(CWD, "dest.txt"));
+      expect(result.read).toContain(path.resolve(CWD, "src.txt"));
+    });
+
+    it("does not include destination in read set", () => {
+      const result = detectFilesFromBashCommand(
+        "Copy-Item -Path src.txt -Destination dest.txt",
+        CWD,
+      );
+      expect(result.read).not.toContain(path.resolve(CWD, "dest.txt"));
+    });
+  });
+
+  // ── PowerShell: Move-Item ───────────────────────────────────────────
+  describe("PowerShell: Move-Item", () => {
+    it("detects Move-Item <src> <dst> (positional) — dst written, src read", () => {
+      const result = detectFilesFromBashCommand("Move-Item src.txt dest.txt", CWD);
+      expect(result.written).toContain(path.resolve(CWD, "dest.txt"));
+      expect(result.read).toContain(path.resolve(CWD, "src.txt"));
+    });
+
+    it("detects Move-Item -Path <src> -Destination <dst> (named)", () => {
+      const result = detectFilesFromBashCommand(
+        "Move-Item -Path old.txt -Destination new.txt",
+        CWD,
+      );
+      expect(result.written).toContain(path.resolve(CWD, "new.txt"));
+      expect(result.read).toContain(path.resolve(CWD, "old.txt"));
+    });
+
+    it("does not include source in written set", () => {
+      const result = detectFilesFromBashCommand("Move-Item src.txt dest.txt", CWD);
+      expect(result.written).not.toContain(path.resolve(CWD, "src.txt"));
+    });
+  });
+
+  // ── PowerShell: New-Item ────────────────────────────────────────────
+  describe("PowerShell: New-Item", () => {
+    it("detects New-Item -Path <file> -ItemType File as written", () => {
+      const result = detectFilesFromBashCommand(
+        "New-Item -Path newfile.txt -ItemType File",
+        CWD,
+      );
+      expect(result.written).toContain(path.resolve(CWD, "newfile.txt"));
+    });
+
+    it("detects New-Item <file> (positional) as written", () => {
+      const result = detectFilesFromBashCommand("New-Item newfile.txt", CWD);
+      expect(result.written).toContain(path.resolve(CWD, "newfile.txt"));
+    });
+  });
+
   // ── Edge cases — filename characters ──────────────────────────────
   describe("edge cases — filename characters", () => {
     it("handles filenames with dots", () => {

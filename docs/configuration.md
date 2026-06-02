@@ -44,7 +44,7 @@ Diagnostic results are appended as plain text to tool output — the existing pi
 
 pi-lens delegates check execution to the **@harms-haus/code-lens** daemon. The `@harms-haus/code-lens` package is a production dependency of pi-lens and is installed automatically — no separate install is needed.
 
-When checks run, pi-lens sends a `fullCheck` JSON-RPC request to the daemon over a Unix socket. The request includes the list of changed files and a subset of your configuration (check flags, timing, and timeouts) as `params.config`. The daemon owns the full check lifecycle — it starts and manages LSP servers on demand, runs prettier/linters/tsc, and returns results.
+When checks run, pi-lens sends a `fullCheck` JSON-RPC request to the daemon over a Unix socket (or Windows named pipe). The request includes the list of changed files and a subset of your configuration (check flags, timing, and timeouts) as `params.config`. The daemon owns the full check lifecycle — it starts and manages LSP servers on demand, runs prettier/linters/tsc, and returns results.
 
 This means:
 
