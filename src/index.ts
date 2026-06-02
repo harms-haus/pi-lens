@@ -96,7 +96,7 @@ async function resolveChangedFilesFromGit(pi: ExtensionAPI, cwd: string): Promis
     if (result.code === 0 && result.stdout.trim()) {
       for (const line of result.stdout.trim().split("\n")) {
         const trimmed = line.trim();
-        if (trimmed) results.push(path.resolve(cwd, trimmed));
+        if (trimmed) results.push(path.resolve(cwd, trimmed).split(path.sep).join('/'));
       }
     }
   } catch {

@@ -76,15 +76,15 @@ export function resolveFilesFromToolResult(
       return [];
   }
 
-  // Resolve to absolute paths
+  // Resolve to absolute paths (normalize separators to / for cross-platform consistency)
   const absolutePaths = rawPaths.map((p) =>
     path.isAbsolute(p) ? path.normalize(p) : path.normalize(path.resolve(cwd, p)),
-  );
+  ).map(p => p.split(path.sep).join('/'));
 
   // Filter to paths contained within cwd (prevent path traversal)
-  const normalizedCwd = path.resolve(cwd) + path.sep;
+  const normalizedCwd = path.resolve(cwd).split(path.sep).join('/') + '/';
   const containedPaths = absolutePaths.filter(
-    (p) => p.startsWith(normalizedCwd) || p === path.resolve(cwd),
+    (p) => p.startsWith(normalizedCwd) || p === path.resolve(cwd).split(path.sep).join('/'),
   );
 
   // Deduplicate
@@ -318,7 +318,7 @@ export function filterFilesByPatterns(
   const excludeRegexes = getCachedGlobRegexes(excludePatterns);
 
   return files.filter((file) => {
-    const relativePath = path.relative(cwd, file);
+    const relativePath = path.relative(cwd, file).split(path.sep).join('/');
 
     // If include patterns specified, file must match at least one
     if (includeRegexes.length > 0 && !includeRegexes.some((re) => re.test(relativePath))) {
